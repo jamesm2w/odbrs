@@ -1,4 +1,4 @@
-use std::{error::Error, path::PathBuf};
+use std::{error::Error, path::PathBuf, sync::{Arc, RwLock}};
 
 mod graph;
 mod gui;
@@ -24,7 +24,7 @@ struct Main {
     pub resource_manager: resource::Resources,
     pub gui: gui::App,
     pub simulation: simulation::Simulation,
-    pub graph: graph::Graph,
+    pub graph: Arc<RwLock<graph::Graph>>,
 }
 
 impl Module for Main {
@@ -44,13 +44,16 @@ impl Module for Main {
         let timer = std::time::Instant::now();
         println!("{} Starting Up", self.get_name());
 
-        let (gui, sim, graph, adjlist) = self.resource_manager.init(_config, ())?;
-        self.graph.init(graph, adjlist)?;
+        let (gui, sim, gph, adjlist) = self.resource_manager.init(_config, ())?;
+        
+        let mut graph = graph::Graph::default();
+        graph.init(gph, adjlist)?;
+        self.graph = Arc::new(RwLock::new(graph));
 
         // These two should be running on separate threads
         self.simulation.init(sim, ())?;
 
-        self.gui.init(gui, ())?;
+        self.gui.init(gui, gui::AppParameters { graph: self.graph.clone() })?;
 
         println!(
             "{} Finished Start up in {:?}",
@@ -63,5 +66,9 @@ impl Module for Main {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut odbrs = Main::default();
-    odbrs.init(PathBuf::from(r#"data/config.toml"#), ())
+    odbrs.init(PathBuf::from(r#"data/config.toml"#), ())?;
+
+    odbrs.gui.start();
+
+    Ok(())
 }

@@ -43,11 +43,11 @@ pub fn point_within_bounds(point: (f64, f64), left: f64, right: f64, top: f64, b
 
 // Return a minimal size "bounding box" around a graph so nothing is excluded
 pub fn minimal_bounding(list: &AdjacencyList) -> (f64, f64, f64, f64) {
-    let mut left = f64::MIN;
-    let mut right = f64::MAX;
+    let mut left = f64::MAX;
+    let mut right = f64::MIN;
 
-    let mut top = f64::MAX;
-    let mut bottom = f64::MIN;
+    let mut top = f64::MIN;
+    let mut bottom = f64::MAX;
 
     for (_, edge) in list.edge_map.iter() {
         for pt in edge.points.iter() {

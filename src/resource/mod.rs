@@ -1,7 +1,4 @@
-use std::{
-    fs,
-    path::PathBuf,
-};
+use std::{fs, path::PathBuf};
 
 use crate::{
     graph::{self, AdjacencyList},
@@ -27,7 +24,7 @@ impl Module for Resources {
         <gui::App as Module>::Configuration,
         <simulation::Simulation as Module>::Configuration,
         <graph::Graph as Module>::Configuration,
-        AdjacencyList
+        AdjacencyList,
     );
     type Parameters = ();
 
@@ -38,7 +35,7 @@ impl Module for Resources {
     fn init(
         &mut self,
         _config: Self::Configuration,
-        _parameters: Self::Parameters
+        _parameters: Self::Parameters,
     ) -> Result<Self::ReturnType, Box<dyn std::error::Error>> {
         let time = std::time::Instant::now();
 
@@ -47,7 +44,7 @@ impl Module for Resources {
 
         let graph = match self.load_graph(&config_file) {
             Some(graph) => Ok(graph),
-            None => Err("Error in loading graph")
+            None => Err("Error in loading graph"),
         }?;
 
         let sim_cfg = config_file.simulation;
