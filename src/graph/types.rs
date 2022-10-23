@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use eframe::epaint::Color32;
 use serde::{Serialize, Deserialize};
 
 pub type NodeId = u128;
@@ -59,4 +60,30 @@ pub struct AdjacencyList {
     pub edge_map: HashMap<EdgeId, EdgeMeta>,
 
     pub adjacency: HashMap<NodeId, Vec<EdgeId>>,
+}
+
+pub fn str_as_colour(c: String) -> Color32 {
+    match c.as_str() {
+        "TRANSPARENT" => Color32::TRANSPARENT,
+        "BLACK" => Color32::BLACK,
+        "DARK_GRAY" => Color32::DARK_GRAY,
+        "GRAY" => Color32::GRAY,
+        "LIGHT_GRAY" => Color32::LIGHT_GRAY,
+        "WHITE" => Color32::WHITE,
+        "BROWN" => Color32::BROWN,
+        "DARK_RED" => Color32::DARK_RED,
+        "RED" => Color32::RED,
+        "LIGHT_RED" => Color32::LIGHT_RED,
+        "YELLOW" => Color32::YELLOW,
+        "LIGHT_YELLO" => Color32::LIGHT_YELLOW,
+        "KHAKI" => Color32::KHAKI,
+        "DARK_GREEN" => Color32::DARK_GREEN,
+        "GREEN" => Color32::GREEN,
+        "LIGHT_GREEN" => Color32::LIGHT_GREEN,
+        "DARK_BLUE" => Color32::DARK_BLUE,
+        "BLUE" => Color32::BLUE,
+        "LIGHT_BLUE" => Color32::LIGHT_BLUE,
+        "GOLD" => Color32::GOLD,
+        _ => Color32::TEMPORARY_COLOR
+    }
 }

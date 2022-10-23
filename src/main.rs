@@ -1,4 +1,9 @@
-use std::{error::Error, path::PathBuf, sync::{Arc, RwLock}};
+use std::{
+    error::Error,
+    path::PathBuf,
+    sync::{mpsc, Arc},
+    thread,
+};
 
 mod graph;
 mod gui;
@@ -24,7 +29,7 @@ struct Main {
     pub resource_manager: resource::Resources,
     pub gui: gui::App,
     pub simulation: simulation::Simulation,
-    pub graph: Arc<RwLock<graph::Graph>>,
+    pub graph: Arc<graph::Graph>,
 }
 
 impl Module for Main {
@@ -45,15 +50,35 @@ impl Module for Main {
         println!("{} Starting Up", self.get_name());
 
         let (gui, sim, gph, adjlist) = self.resource_manager.init(_config, ())?;
-        
+
         let mut graph = graph::Graph::default();
         graph.init(gph, adjlist)?;
-        self.graph = Arc::new(RwLock::new(graph));
+        self.graph = Arc::new(graph);
+
+        // Send stuff to the Simulation thread
+        let (sim_tx, sim_rx) = mpsc::channel();
+
+        // Send stuff to the GUI thread
+        let (gui_tx, gui_rx) = mpsc::channel();
 
         // These two should be running on separate threads
-        self.simulation.init(sim, ())?;
+        self.simulation.init(
+            sim,
+            simulation::SimulationParameters {
+                graph: self.graph.clone(),
+                rx: sim_rx,
+                gui_tx: gui_tx.clone(),
+            },
+        )?;
 
-        self.gui.init(gui, gui::AppParameters { graph: self.graph.clone() })?;
+        self.gui.init(
+            gui,
+            gui::AppParameters {
+                graph: self.graph.clone(),
+                rx: gui_rx,
+                sim_tx: sim_tx.clone(),
+            },
+        )?;
 
         println!(
             "{} Finished Start up in {:?}",
@@ -68,7 +93,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut odbrs = Main::default();
     odbrs.init(PathBuf::from(r#"data/config.toml"#), ())?;
 
+    thread::spawn(move || {
+        // Simulation start here in other thread
+        println!("Simulation Thread Started");
+        odbrs.simulation.start();
+        println!("Simulation Thread Ended");
+    });
+
+    println!("GUI Thread Started");
+    // GUI start here in main thread
     odbrs.gui.start();
+    println!("GUI Thread Ended");
 
     Ok(())
 }
