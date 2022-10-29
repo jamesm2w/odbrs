@@ -62,8 +62,8 @@ pub struct AdjacencyList {
     pub adjacency: HashMap<NodeId, Vec<EdgeId>>,
 }
 
-pub fn str_as_colour(c: String) -> Color32 {
-    match c.as_str() {
+pub fn str_as_colour(c: &String) -> Color32 {
+    match c.to_uppercase().as_str() {
         "TRANSPARENT" => Color32::TRANSPARENT,
         "BLACK" => Color32::BLACK,
         "DARK_GRAY" => Color32::DARK_GRAY,

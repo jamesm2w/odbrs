@@ -2,11 +2,14 @@ use std::{fs, path::PathBuf};
 
 use crate::{
     graph::{self, AdjacencyList},
-    gui, simulation, Module,
+    gui, simulation, Module, resource::load_image::load_images,
 };
 use serde::Deserialize;
 
+use self::load_image::{ImagesConfig, ImageResources};
+
 pub mod load_graph;
+pub mod load_image;
 
 /// Resources contains the methods for loading and converting data from disk
 /// - Configuration
@@ -25,6 +28,7 @@ impl Module for Resources {
         <simulation::Simulation as Module>::Configuration,
         <graph::Graph as Module>::Configuration,
         AdjacencyList,
+        ImageResources
     );
     type Parameters = ();
 
@@ -51,9 +55,11 @@ impl Module for Resources {
         let gui_cfg = config_file.app;
         let gph_cfg = config_file.graph;
 
+        let demand_images = load_images(config_file.demand)?;
+
         println!("[{}] Initialised in {:?}", self.get_name(), time.elapsed());
 
-        Ok((gui_cfg, sim_cfg, gph_cfg, graph))
+        Ok((gui_cfg, sim_cfg, gph_cfg, graph, demand_images))
     }
 }
 
@@ -64,6 +70,7 @@ struct ConfigFile {
     pub simulation: <simulation::Simulation as Module>::Configuration,
     pub graph: <graph::Graph as Module>::Configuration,
     pub defaults: Vec<GraphConfig>,
+    pub demand: ImagesConfig
 }
 
 // Stores the config for this resource module

@@ -10,7 +10,7 @@ use std::{
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-use crate::{graph::Graph, gui::AppMessage, Module};
+use crate::{graph::Graph, gui::AppMessage, Module, resource::load_image::ImageResources};
 
 pub mod random_controller;
 pub mod demand;
@@ -36,6 +36,7 @@ pub struct Simulation {
     i: DateTime<Utc>,
 
     state: SimulationState,
+    speed: u64, // Tick speed
 
     controller: random_controller::RandomController,
     agents: Vec<random_controller::RandomAgent>,
@@ -79,8 +80,9 @@ impl Module for Simulation {
         self.gui_tx = Some(parameters.gui_tx);
 
         self.graph = parameters.graph; 
+        self.speed = 100; // TODO: Config this?
 
-        for _ in 0..100 { // TODO: Change this number -- config maybe?
+        for _ in 0..1 { // TODO: Change this number -- config maybe?
             self.agents.push(self.controller.spawn_agent(self.graph.clone()));
         }
 
@@ -98,6 +100,7 @@ impl Module for Simulation {
 pub enum SimulationMessage {
     ShutdownThread,
     ChangeState(SimulationState),
+    ChangeSpeed(u64) // Change the simulation tick speed. ms value.
 }
 
 #[derive(Default, Deserialize)]
@@ -109,6 +112,7 @@ pub struct SimulationParameters {
     pub graph: Arc<Graph>,
     pub rx: Receiver<SimulationMessage>,
     pub gui_tx: Sender<AppMessage>,
+    pub demand_images: ImageResources
 }
 
 impl Simulation {
@@ -124,7 +128,7 @@ impl Simulation {
                     self.tick();
                     self.send_state();
 
-                    thread::sleep(Duration::from_millis(100));
+                    thread::sleep(Duration::from_millis(self.speed));
                     
                 }
                 SimulationState::Paused => {}
@@ -162,8 +166,9 @@ impl Simulation {
             SimulationMessage::ChangeState(state) => {
                 self.state = state;
                 self.send_state();
-            }
-            _ => (),
+            },
+            SimulationMessage::ChangeSpeed(speed) => self.speed = speed,
+            // _ => (),
         }
     }
 

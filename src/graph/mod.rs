@@ -2,7 +2,7 @@ use std::{sync::RwLock, collections::HashMap};
 
 use eframe::{
     egui::{Id, Sense, Ui},
-    epaint::{Color32, Shape, Stroke},
+    epaint::{Shape, Stroke},
 };
 
 use serde::Deserialize;
@@ -127,7 +127,7 @@ impl Graph {
                     .unwrap()
                     .map_to_screen(node_meta.point.0, node_meta.point.1),
                 self.config.node_radius,
-                Color32::BLACK,
+                str_as_colour(&self.config.node_colour),
             ))
         }
 
@@ -143,7 +143,7 @@ impl Graph {
                             .map_to_screen(point.0, point.1)
                     })
                     .collect(),
-                Stroke::new(self.config.edge_thickness, Color32::BLACK),
+                Stroke::new(self.config.edge_thickness, str_as_colour(&self.config.edge_colour)),
             ))
         }
         shapes

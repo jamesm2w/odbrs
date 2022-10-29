@@ -21,9 +21,10 @@ use crate::{
     Module,
 };
 
-use self::simulation_control::SimulationControl;
+use self::{simulation_control::SimulationControl, hover_control::HoverControl};
 
 mod simulation_control;
+mod hover_control;
 
 /// Gui contains the GUI for the app obviously
 /// - Function for view of the app
@@ -75,7 +76,12 @@ impl Module for App {
             app_state: self.state.clone(),
             sim_tx: self.sim_tx.clone().unwrap(),
             state: simulation_control::ControlState::Paused,
+            speed: 100
         })];
+
+        if self.config.hover_enabled {
+            self.controls.push(Box::new(HoverControl::new(self.graph.clone())));
+        }
 
         Ok(println!(
             "[{}] Initialised in {:?}",
@@ -87,7 +93,7 @@ impl Module for App {
 
 #[derive(Default, Clone, Deserialize)]
 pub struct GuiConfig {
-    test: String,
+    hover_enabled: bool
 }
 
 pub struct AppParameters {
@@ -130,7 +136,7 @@ impl App {
                 state.agent_pos = agents;
                 // println!("got agent pos {:?}", state.agent_pos[0]);
             }
-            _ => (),
+            // _ => (), // TODO: Uncomment this if other variants added
         }
     }
 }

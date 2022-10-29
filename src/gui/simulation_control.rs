@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc, sync::mpsc::Sender};
 
-use eframe::egui::Ui;
+use eframe::egui::{Ui, Slider};
 
 use crate::simulation::{SimulationMessage, SimulationState};
 
@@ -10,6 +10,7 @@ pub struct SimulationControl {
     pub app_state: Rc<RefCell<AppState>>,
     pub sim_tx: Sender<SimulationMessage>,
     pub state: ControlState,
+    pub speed: u64,
 }
 
 #[derive(PartialEq, Eq)]
@@ -61,5 +62,14 @@ impl Control for SimulationControl {
                 }
             }
         });
+
+        let slider = Slider::new(&mut self.speed, 1..=10000).text("Tick Speed");
+        let resp = ui.add(slider);
+        if resp.changed() {
+            match self.sim_tx.send(SimulationMessage::ChangeSpeed(self.speed)) {
+                Ok(_) => (),
+                Err(err) => eprintln!("Send Error {:?}", err)
+            }
+        }
     }
 }
