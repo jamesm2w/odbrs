@@ -4,13 +4,15 @@ use std::{
         Arc,
     },
     thread,
-    time::Duration,
+    time::Duration, collections::VecDeque,
 };
 
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
-use crate::{graph::Graph, gui::AppMessage, Module, resource::load_image::ImageResources};
+use crate::{graph::Graph, gui::AppMessage, Module, resource::load_image::DemandResources};
+
+use self::demand::DemandGenerator;
 
 pub mod random_controller;
 pub mod demand;
@@ -37,6 +39,8 @@ pub struct Simulation {
 
     state: SimulationState,
     speed: u64, // Tick speed
+
+    demand_generator: Option<Arc<DemandGenerator>>,
 
     controller: random_controller::RandomController,
     agents: Vec<random_controller::RandomAgent>,
@@ -86,8 +90,12 @@ impl Module for Simulation {
             self.agents.push(self.controller.spawn_agent(self.graph.clone()));
         }
 
-        self.send_state();
+        // TODO: Issue with this starting too soon?
+        self.demand_generator = Some(DemandGenerator::start(parameters.demand_resources, self.graph.clone()));
 
+        self.send_state();
+        self.send_demand_gen();
+        
         Ok(println!(
             "[{}] Initialised in {:?}",
             self.get_name(),
@@ -100,7 +108,7 @@ impl Module for Simulation {
 pub enum SimulationMessage {
     ShutdownThread,
     ChangeState(SimulationState),
-    ChangeSpeed(u64) // Change the simulation tick speed. ms value.
+    ChangeSpeed(u64), // Change the simulation tick speed. ms value.
 }
 
 #[derive(Default, Deserialize)]
@@ -112,11 +120,12 @@ pub struct SimulationParameters {
     pub graph: Arc<Graph>,
     pub rx: Receiver<SimulationMessage>,
     pub gui_tx: Sender<AppMessage>,
-    pub demand_images: ImageResources
+    pub demand_resources: DemandResources
 }
 
 impl Simulation {
     pub fn start(&mut self) {
+
         loop {
             match self.rx.as_ref().unwrap().try_recv() {
                 Ok(msg) => self.handle_message(msg),
@@ -125,11 +134,17 @@ impl Simulation {
 
             match self.state {
                 SimulationState::Running => {
+                    match self.demand_generator.as_ref().unwrap().get_demand_queue().write() {
+                        Ok(mut queue) => {
+                            *queue = VecDeque::new();
+                        },
+                        Err(err) => panic!("demand error {}", err)
+                    }
+                    
                     self.tick();
                     self.send_state();
 
                     thread::sleep(Duration::from_millis(self.speed));
-                    
                 }
                 SimulationState::Paused => {}
                 SimulationState::Stopped => break,
@@ -159,10 +174,20 @@ impl Simulation {
             }
     }
 
+    pub fn send_demand_gen(&self) {
+        match self.gui_tx.as_ref().unwrap().send(AppMessage::NoteDemandGen(self.demand_generator.as_ref().unwrap().clone())) {
+            Ok(()) => {},
+            Err(err) => eprintln!("Error Sending Demand gen instance: {}", err)
+        }
+    }
+
     pub fn handle_message(&mut self, msg: SimulationMessage) {
         println!("[SIM] Thread handle message {:?}", msg);
         match msg {
-            SimulationMessage::ShutdownThread => self.state = SimulationState::Stopped,
+            SimulationMessage::ShutdownThread => {
+                self.state = SimulationState::Stopped;
+                self.demand_generator.as_ref().unwrap().shutdown();
+            },
             SimulationMessage::ChangeState(state) => {
                 self.state = state;
                 self.send_state();
@@ -175,9 +200,13 @@ impl Simulation {
     pub fn tick(&mut self) {
         // Do a tick
         self.i = self.i + (chrono::Duration::minutes(1));
+
+        // Despatch Demand Handler to get some more demand
+        self.demand_generator.as_ref().unwrap().tick(self.i);
+
         // println!("Sim tick {:?}", self.i);
-        self.controller
-            .update_agents(&mut self.agents, self.graph.clone())
+        // self.controller
+        //     .update_agents(&mut self.agents, self.graph.clone())
     }
 }
 

@@ -49,7 +49,7 @@ impl Module for Main {
         let timer = std::time::Instant::now();
         println!("{} Starting Up", self.get_name());
 
-        let (gui, sim, gph, adjlist, img_resources) = self.resource_manager.init(_config, ())?;
+        let (gui, sim, gph, adjlist, demand_resources) = self.resource_manager.init(_config, ())?;
 
         let mut graph = graph::Graph::default();
         graph.init(gph, adjlist)?;
@@ -68,7 +68,7 @@ impl Module for Main {
                 graph: self.graph.clone(),
                 rx: sim_rx,
                 gui_tx: gui_tx.clone(),
-                demand_images: img_resources
+                demand_resources,
             },
         )?;
 

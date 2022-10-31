@@ -44,9 +44,9 @@ impl Transform {
 
     // Increase the zoom level of the graph
     pub fn zoom(&mut self, scroll_delta: f32) {
-        self.zoom += scroll_delta / 50.0;
+        self.zoom *= scroll_delta;// / 50.0;
 
-        self.zoom = self.zoom.clamp(1.0, 100.0)
+        self.zoom = self.zoom.clamp(0.0001, 100.0)
     }
 
     // Calculate the scale of the graph for the given width

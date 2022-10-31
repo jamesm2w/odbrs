@@ -103,7 +103,7 @@ impl Graph {
         let drag_delta = ui
             .interact(ui.clip_rect(), Id::null(), Sense::drag())
             .drag_delta();
-        let scroll_delta = (ui.input().zoom_delta() - 1.0) * 50.0; //ui.input().scroll_delta.y;
+        let scroll_delta = ui.input().zoom_delta(); //* 50.0; //ui.input().scroll_delta.y;
 
         match self.transform.try_write() {
             Ok(mut transform) => {

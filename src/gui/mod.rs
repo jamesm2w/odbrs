@@ -17,7 +17,7 @@ use serde::Deserialize;
 
 use crate::{
     graph::Graph,
-    simulation::{self, SimulationMessage, SimulationState},
+    simulation::{self, SimulationMessage, SimulationState, demand::DemandGenerator},
     Module,
 };
 
@@ -106,6 +106,7 @@ pub struct AppParameters {
 pub struct AppState {
     pub sim_state: (DateTime<Utc>, SimulationState),
     pub agent_pos: Vec<((f64, f64), u128, u128)>,
+    pub demand_gen: Option<Arc<DemandGenerator>>
 }
 
 #[derive(Debug)]
@@ -113,6 +114,7 @@ pub enum AppMessage {
     // Placeholder(()),
     // SimulationState(DateTime<Utc>, SimulationState),
     SimulationStateWithAgents(DateTime<Utc>, SimulationState, Vec<((f64, f64), u128, u128)>),
+    NoteDemandGen(Arc<DemandGenerator>)
 }
 
 impl App {
@@ -126,20 +128,31 @@ impl App {
     fn handle_message(&mut self, msg: AppMessage) {
         // println!("[GUI] Thread handle message {:?}", msg);
         match msg {
-            // AppMessage::SimulationState(u, st) => {
-            //     let mut state = self.state.borrow_mut();
-            //     state.sim_state = (u, st);
-            // }
             AppMessage::SimulationStateWithAgents(u, st, agents) => {
                 let mut state = self.state.borrow_mut();
                 state.sim_state = (u, st);
                 state.agent_pos = agents;
                 // println!("got agent pos {:?}", state.agent_pos[0]);
+            },
+            AppMessage::NoteDemandGen(demand_gen) => {
+                let mut state = self.state.borrow_mut();
+                state.demand_gen = Some(demand_gen);
             }
             // _ => (), // TODO: Uncomment this if other variants added
         }
     }
 }
+
+// fn load_image_from_path(path: &std::path::Path) -> Result<eframe::egui::ColorImage, image::ImageError> {
+//     let image = image::io::Reader::open(path)?.decode()?;
+//     let size = [image.width() as _, image.height() as _];
+//     let image_buffer = image.to_rgba8();
+//     let pixels = image_buffer.as_flat_samples();
+//     Ok(eframe::egui::ColorImage::from_rgba_unmultiplied(
+//         size,
+//         pixels.as_slice(),
+//     ))
+// }
 
 impl eframe::App for App {
     fn on_close_event(&mut self) -> bool {
@@ -168,6 +181,11 @@ impl eframe::App for App {
                 // ui.heading("Hello World");
                 // self.graph.view(ui);
 
+                // let texture: &eframe::egui::TextureHandle = self.overlay_img.get_or_insert_with(|| {
+                //     ui.ctx().load_texture("image", load_image_from_path(&Path::new("./data/img/rgb.png")).unwrap(), eframe::egui::TextureFilter::Nearest)
+                // });
+
+                // ui.add(eframe::egui::Image::new(texture, ui.available_size()));
                 self.graph.view(ui);
 
                 // Draw the agent positions 
@@ -196,6 +214,22 @@ impl eframe::App for App {
                         })
                         .collect(),
                 );
+
+                if let Some(demand_gen) = &self.state.borrow().demand_gen {
+                    ui.painter().extend( demand_gen.get_demand_queue().read().expect("GUI Couldn't read demand_gen").iter().map(|demand| {
+                        
+                        Shape::Vec(vec![
+                            // Shape::line_segment([
+                            //     self.graph.get_transform().read().unwrap().map_to_screen(demand.0.0 as _, demand.0.1 as _),
+                            //     self.graph.get_transform().read().unwrap().map_to_screen(demand.1.0 as _, demand.1.1 as _)
+                            // ], Stroke::new(1.5, Color32::LIGHT_GREEN)),
+                            Shape::circle_stroke(self.graph.get_transform().read().unwrap().map_to_screen(demand.0.0 as _, demand.0.1 as _), 1.0, Stroke::new(1.5, Color32::LIGHT_GREEN)),
+                            Shape::circle_stroke(self.graph.get_transform().read().unwrap().map_to_screen(demand.1.0 as _, demand.1.1 as _), 1.0, Stroke::new(1.5, Color32::LIGHT_RED)),
+                            //TODO: tidy up this lol
+                        ])
+                        
+                    }).collect())
+                }
             });
 
         SidePanel::new(eframe::egui::panel::Side::Left, "control_panel")

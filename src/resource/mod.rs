@@ -6,7 +6,7 @@ use crate::{
 };
 use serde::Deserialize;
 
-use self::load_image::{ImagesConfig, ImageResources};
+use self::load_image::{DemandResourcesConfig, DemandResources};
 
 pub mod load_graph;
 pub mod load_image;
@@ -28,7 +28,7 @@ impl Module for Resources {
         <simulation::Simulation as Module>::Configuration,
         <graph::Graph as Module>::Configuration,
         AdjacencyList,
-        ImageResources
+        DemandResources
     );
     type Parameters = ();
 
@@ -70,7 +70,7 @@ struct ConfigFile {
     pub simulation: <simulation::Simulation as Module>::Configuration,
     pub graph: <graph::Graph as Module>::Configuration,
     pub defaults: Vec<GraphConfig>,
-    pub demand: ImagesConfig
+    pub demand: DemandResourcesConfig
 }
 
 // Stores the config for this resource module
