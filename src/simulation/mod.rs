@@ -136,7 +136,7 @@ impl Simulation {
                 SimulationState::Running => {
                     match self.demand_generator.as_ref().unwrap().get_demand_queue().write() {
                         Ok(mut queue) => {
-                            *queue = VecDeque::new();
+                            queue.clear();
                         },
                         Err(err) => panic!("demand error {}", err)
                     }

@@ -11,7 +11,7 @@ use rand::Rng;
 
 use crate::{graph::Graph, resource::load_image::{DemandResources, ImageSelection, ImageData}};
 
-const TICK_DEMAND: usize = 997;
+const TICK_DEMAND: usize = 108;
 
 #[derive(Debug)]
 enum DemandThreadMessage {
@@ -32,7 +32,7 @@ pub struct Demand(pub (f32, f32), pub (f32, f32), pub DateTime<Utc>);
 
 impl DemandGenerator {
     pub fn tick(&self, time: DateTime<Utc>) {
-        match self.thread_gen_tx.send(DemandThreadMessage::Yield(TICK_DEMAND, time)) {
+        match self.thread_gen_tx.send(DemandThreadMessage::Yield(*self.resources.get_demand_levels().get(time.hour() as usize - 1).unwrap() as usize, time)) {
             Ok(()) => (),
             Err(err) => panic!("Sending to demand gen thread failed {}", err),
         };
@@ -79,7 +79,7 @@ impl DemandGenerator {
                     Ok(DemandThreadMessage::Yield(amount, time)) => {
                         let diff = amount - buffer.len();
                         
-                        buffer.append(&mut demand_gen_ref.generate_amount(diff, &time));
+                        buffer.append(&mut demand_gen_ref.generate_amount(amount, &time));
                         last_time = time;
 
                         match demand_gen_ref.demand_queue.write() {
@@ -123,7 +123,8 @@ impl DemandGenerator {
                 self.resources.get_images().get(&i).expect("Couldn't randomise selection").clone()
             },
             ImageSelection::TimeBasedChoice(map) => {
-                let i = map.get(time.hour() as usize).expect("Couldn't get time based index");
+                let i = map.get(time.hour() as usize - 1).expect("Couldn't get time based index");
+                // println!("choice {:?}", i);
                 self.resources.get_images().get(&i).expect("Couldn't select based on time").clone()
             }
         }
@@ -138,6 +139,8 @@ impl DemandGenerator {
         let mut b_pix = None;
 
         let (r_w, g_w, b_w) = image.get_max_weight();
+
+        // println!("image max weight {:?} {:?} {:?}", r_w, g_w, b_w);
 
         let mut rng_r = rand::thread_rng().gen_range(0..if r_w > 0 { r_w } else { 1 });
         let mut rng_g = rand::thread_rng().gen_range(0..if g_w > 0 { g_w } else { 1 });

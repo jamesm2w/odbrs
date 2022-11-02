@@ -4,27 +4,27 @@ use std::{
     sync::{
         mpsc::{Receiver, Sender},
         Arc,
-    }
+    },
 };
 
 use chrono::{DateTime, Utc};
 use eframe::{
     egui::{CentralPanel, SidePanel, Ui},
-    epaint::{vec2, Color32, Shape, Stroke},
+    epaint::{pos2, vec2, Color32, Shape, Stroke},
     NativeOptions,
 };
 use serde::Deserialize;
 
 use crate::{
     graph::Graph,
-    simulation::{self, SimulationMessage, SimulationState, demand::DemandGenerator},
+    simulation::{self, demand::DemandGenerator, SimulationMessage, SimulationState},
     Module,
 };
 
-use self::{simulation_control::SimulationControl, hover_control::HoverControl};
+use self::{hover_control::HoverControl, simulation_control::SimulationControl};
 
-mod simulation_control;
 mod hover_control;
+mod simulation_control;
 
 /// Gui contains the GUI for the app obviously
 /// - Function for view of the app
@@ -76,11 +76,12 @@ impl Module for App {
             app_state: self.state.clone(),
             sim_tx: self.sim_tx.clone().unwrap(),
             state: simulation_control::ControlState::Paused,
-            speed: 100
+            speed: 100,
         })];
 
         if self.config.hover_enabled {
-            self.controls.push(Box::new(HoverControl::new(self.graph.clone())));
+            self.controls
+                .push(Box::new(HoverControl::new(self.graph.clone())));
         }
 
         Ok(println!(
@@ -93,7 +94,7 @@ impl Module for App {
 
 #[derive(Default, Clone, Deserialize)]
 pub struct GuiConfig {
-    hover_enabled: bool
+    hover_enabled: bool,
 }
 
 pub struct AppParameters {
@@ -106,15 +107,19 @@ pub struct AppParameters {
 pub struct AppState {
     pub sim_state: (DateTime<Utc>, SimulationState),
     pub agent_pos: Vec<((f64, f64), u128, u128)>,
-    pub demand_gen: Option<Arc<DemandGenerator>>
+    pub demand_gen: Option<Arc<DemandGenerator>>,
 }
 
 #[derive(Debug)]
 pub enum AppMessage {
     // Placeholder(()),
     // SimulationState(DateTime<Utc>, SimulationState),
-    SimulationStateWithAgents(DateTime<Utc>, SimulationState, Vec<((f64, f64), u128, u128)>),
-    NoteDemandGen(Arc<DemandGenerator>)
+    SimulationStateWithAgents(
+        DateTime<Utc>,
+        SimulationState,
+        Vec<((f64, f64), u128, u128)>,
+    ),
+    NoteDemandGen(Arc<DemandGenerator>),
 }
 
 impl App {
@@ -133,12 +138,11 @@ impl App {
                 state.sim_state = (u, st);
                 state.agent_pos = agents;
                 // println!("got agent pos {:?}", state.agent_pos[0]);
-            },
+            }
             AppMessage::NoteDemandGen(demand_gen) => {
                 let mut state = self.state.borrow_mut();
                 state.demand_gen = Some(demand_gen);
-            }
-            // _ => (), // TODO: Uncomment this if other variants added
+            } // _ => (), // TODO: Uncomment this if other variants added
         }
     }
 }
@@ -188,7 +192,22 @@ impl eframe::App for App {
                 // ui.add(eframe::egui::Image::new(texture, ui.available_size()));
                 self.graph.view(ui);
 
-                // Draw the agent positions 
+
+                let transfrom = self.graph.get_transform().read().unwrap();
+
+                let top_left = transfrom.map_to_screen(transfrom.left as _, transfrom.top as _);
+                let bot_right = transfrom.map_to_screen(transfrom.right as _, transfrom.bottom as _);
+
+                ui.painter().add(Shape::rect_stroke(
+                    eframe::epaint::Rect {
+                        min: top_left,
+                        max: bot_right,
+                    },
+                    0.0,
+                    Stroke::new(2.0, Color32::RED),
+                ));
+
+                // Draw the agent positions
                 // TODO: Refactor this to be nicer
                 ui.painter().extend(
                     self.state
@@ -197,18 +216,40 @@ impl eframe::App for App {
                         .iter()
                         .map(|((x, y), edge, node)| {
                             let agent = Shape::circle_stroke(
-                                self.graph.get_transform().read().unwrap().map_to_screen(*x, *y),
+                                self.graph
+                                    .get_transform()
+                                    .read()
+                                    .unwrap()
+                                    .map_to_screen(*x, *y),
                                 3.0,
                                 Stroke::new(2.0, Color32::YELLOW),
                             );
 
                             let node_point = &self.graph.get_nodelist().get(node).unwrap().point;
-                            let node = Shape::circle_stroke(self.graph.get_transform().read().unwrap().map_to_screen(node_point.0 as _, node_point.1 as _), 2.0, Stroke::new(1.0, Color32::LIGHT_GREEN));
-                        
+                            let node = Shape::circle_stroke(
+                                self.graph
+                                    .get_transform()
+                                    .read()
+                                    .unwrap()
+                                    .map_to_screen(node_point.0 as _, node_point.1 as _),
+                                2.0,
+                                Stroke::new(1.0, Color32::LIGHT_GREEN),
+                            );
+
                             let edge_points = &self.graph.get_edgelist().get(edge).unwrap().points;
-                            let line = Shape::line(edge_points.iter().map(|(i, j)| {
-                                self.graph.get_transform().read().unwrap().map_to_screen(*i, *j)
-                            }).collect(), Stroke::new(1.0, Color32::LIGHT_GREEN));
+                            let line = Shape::line(
+                                edge_points
+                                    .iter()
+                                    .map(|(i, j)| {
+                                        self.graph
+                                            .get_transform()
+                                            .read()
+                                            .unwrap()
+                                            .map_to_screen(*i, *j)
+                                    })
+                                    .collect(),
+                                Stroke::new(1.0, Color32::LIGHT_GREEN),
+                            );
 
                             Shape::Vec(vec![agent, node, line])
                         })
@@ -216,19 +257,41 @@ impl eframe::App for App {
                 );
 
                 if let Some(demand_gen) = &self.state.borrow().demand_gen {
-                    ui.painter().extend( demand_gen.get_demand_queue().read().expect("GUI Couldn't read demand_gen").iter().map(|demand| {
-                        
-                        Shape::Vec(vec![
-                            // Shape::line_segment([
-                            //     self.graph.get_transform().read().unwrap().map_to_screen(demand.0.0 as _, demand.0.1 as _),
-                            //     self.graph.get_transform().read().unwrap().map_to_screen(demand.1.0 as _, demand.1.1 as _)
-                            // ], Stroke::new(1.5, Color32::LIGHT_GREEN)),
-                            Shape::circle_stroke(self.graph.get_transform().read().unwrap().map_to_screen(demand.0.0 as _, demand.0.1 as _), 1.0, Stroke::new(1.5, Color32::LIGHT_GREEN)),
-                            Shape::circle_stroke(self.graph.get_transform().read().unwrap().map_to_screen(demand.1.0 as _, demand.1.1 as _), 1.0, Stroke::new(1.5, Color32::LIGHT_RED)),
-                            //TODO: tidy up this lol
-                        ])
-                        
-                    }).collect())
+                    ui.painter().extend(
+                        demand_gen
+                            .get_demand_queue()
+                            .read()
+                            .expect("GUI Couldn't read demand_gen")
+                            .iter()
+                            .map(|demand| {
+                                Shape::Vec(vec![
+                                    // Shape::line_segment([
+                                    //     self.graph.get_transform().read().unwrap().map_to_screen(demand.0.0 as _, demand.0.1 as _),
+                                    //     self.graph.get_transform().read().unwrap().map_to_screen(demand.1.0 as _, demand.1.1 as _)
+                                    // ], Stroke::new(1.5, Color32::LIGHT_GREEN)),
+                                    Shape::circle_stroke(
+                                        self.graph
+                                            .get_transform()
+                                            .read()
+                                            .unwrap()
+                                            .map_to_screen(demand.0 .0 as _, demand.0 .1 as _),
+                                        1.0,
+                                        Stroke::new(1.5, Color32::LIGHT_GREEN),
+                                    ),
+                                    Shape::circle_stroke(
+                                        self.graph
+                                            .get_transform()
+                                            .read()
+                                            .unwrap()
+                                            .map_to_screen(demand.1 .0 as _, demand.1 .1 as _),
+                                        1.0,
+                                        Stroke::new(1.5, Color32::LIGHT_RED),
+                                    ),
+                                    //TODO: tidy up this lol
+                                ])
+                            })
+                            .collect(),
+                    )
                 }
             });
 

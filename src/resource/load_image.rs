@@ -7,13 +7,14 @@ use serde::{Serialize, Deserialize};
 #[derive(Default, Debug)]
 pub struct DemandResources {
     image_data: HashMap<u8, Arc<Box<ImageData>>>,
-    selection: ImageSelection
+    selection: ImageSelection,
+    demand_levels: Vec<u8>
 }
 
 impl DemandResources {
 
     pub fn new(selection: ImageSelection) -> Self {
-        DemandResources { image_data: HashMap::new(), selection }
+        DemandResources { image_data: HashMap::new(), selection, demand_levels: vec![] }
     }
 
     pub fn get_images(&self) -> &HashMap<u8, Arc<Box<ImageData>>> {
@@ -22,6 +23,10 @@ impl DemandResources {
 
     pub fn get_selection(&self) -> &ImageSelection {
         &self.selection
+    }
+
+    pub fn get_demand_levels(&self) -> &Vec<u8> {
+        &self.demand_levels
     }
 }
 
@@ -87,7 +92,8 @@ impl Default for ImageSelection {
 )]
 pub struct DemandResourcesConfig {
     pub paths: Vec<String>, // Map of path keys and paths
-    pub select_by: ImageSelection
+    pub select_by: ImageSelection,
+    pub minute_demand: Vec<u8>
 }
 
 pub fn load_images(config: DemandResourcesConfig) -> Result<DemandResources, Box<dyn Error>> {
@@ -102,6 +108,8 @@ pub fn load_images(config: DemandResourcesConfig) -> Result<DemandResources, Box
         demand_resources.image_data.insert(key, Arc::from(Box::new(img)));
         key += 1;
     }
+
+    demand_resources.demand_levels = config.minute_demand;
 
     Ok(demand_resources)
 }
