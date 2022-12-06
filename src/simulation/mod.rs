@@ -76,7 +76,7 @@ impl Module for Simulation {
 
     fn init(
         &mut self,
-        config: Self::Configuration,
+        _config: Self::Configuration,
         parameters: Self::Parameters,
     ) -> Result<Self::ReturnType, Box<dyn std::error::Error>> {
         let time = std::time::Instant::now();

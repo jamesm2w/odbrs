@@ -65,7 +65,7 @@ impl Controller for RandomController {
         self.agents.last().expect("Error creating random agent")
     }
 
-    fn update_agents(&mut self, graph: std::sync::Arc<crate::graph::Graph>, _demand: Arc<DemandGenerator>, time: DateTime<Utc>) {
+    fn update_agents(&mut self, graph: std::sync::Arc<crate::graph::Graph>, _demand: Arc<DemandGenerator>, _time: DateTime<Utc>) {
         // self.agents.iter_mut().for_each(|agent| self.move_agent(agent, graph.clone()));
         for agent in self.agents.iter_mut() {
             Self::move_agent(agent, graph.clone());
@@ -113,58 +113,34 @@ impl RandomController {
                 x: agent.position.0 as _,
                 y: agent.position.1 as _,
             };
-            //println!("NEW MOVE current pos {:?} distance left {:?}", agent_pos, distance_to_move);
 
             for i in 0..line_points.len() - 1 {
                 let start = line_points[i];
                 let end = line_points[i + 1];
 
-                //println!("NEW SEGMENT start {:?} end {:?}", start, end);
-
                 // On this line segment
                 if point_on_line(start, end, agent_pos) {
-                    //println!("\tAgent is on this line segment");
                     let line_distance_remaining = end - agent_pos;
                     if distance_to_move > line_distance_remaining.length() {
                         // Move to end of line segment bit
-                        //println!("\tAgent move to end of this line segment");
                         agent_pos = end;
                         distance_to_move -= line_distance_remaining.length(); // reduce distance needed by amount moved
-                                                                              //println!("\t\tnow pos={:?} move left={:?}", agent_pos, distance_to_move);
                     } else {
-                        //println!("\tAgent can move along this line segment");
                         // Can move a the given distance along this segment
                         agent_pos += ((end - start) / (end - start).length()) * distance_to_move;
-                        distance_to_move = 0.0; // no need to move any more distance
-                                                //println!("\t\tnow pos={:?} move left={:?}", agent_pos, distance_to_move);
-                                                // break;
+                        return
                     }
-                } else {
-                    //println!("\tAgent is not on this segment");
                 }
             }
 
             agent.position = (agent_pos.x as _, agent_pos.y as _);
 
             if distance_to_move > 0.0 {
-                //println!("\tNeed to move to next graph edge pos {:?} end {:?}", agent.position, next_node.point );
-
-                let dist_left = Vec2 {
-                    x: agent.position.0 as _,
-                    y: agent.position.1 as _,
-                } - Vec2 {
-                    x: next_node.point.0 as _,
-                    y: next_node.point.1 as _,
-                };
-                //println!("\t remaining dist {:?}", dist_left.length());
-
                 // Need to move to next node in graph
                 agent.prev_node = next_node_id;
                 let adjacency = graph.get_adjacency().get(&next_node_id).unwrap();
-                // //println!("adjacent edges {:?}", adjacency);
                 loop {
                     let next_edge_i = rand::thread_rng().gen_range(0..=adjacency.len() - 1);
-                    // //println!("random index {:?} out of {:?}", next_edge_i, adjacency.len());
                     agent.cur_edge = adjacency.get(next_edge_i).unwrap().clone();
                     let current_edge = graph
                         .get_edgelist()
@@ -182,29 +158,22 @@ impl RandomController {
                     }
                 }
 
-                // DEBUG:  This shouldn't be necessary really
                 agent.position = next_node.point;
             }
-
-            //println!("pos={:?} distance_left={:?}", agent.position, distance_to_move);
-            //println!();
         }
     }
 }
 
-// TODO: Handle straight hoizontal and vertical lines maybe (doubt we'd see those though)
 fn point_on_line(start: Vec2, end: Vec2, test: Vec2) -> bool {
-    // //println!("\tpoint on line start {:?} end {:?} test {:?}", start, end, test);
-    let xs = (test.x - start.x) / (end.x - start.x);
-    let ys = (test.y - start.y) / (end.y - start.y);
+    let d1 = (start - test).length();
+    let d2 = (end - test).length();
 
-    // let AB = test - start;
-    // let AC = end - start;
+    let line_len = (end - start).length();
+    let buffer = 0.1;
 
-    // let cross = AB.x * AC.y - (AB.y * AC.x)
-    // cross == 0
-
-    // //println!("\txs: {:?} ys: {:?}", xs, ys);
-
-    float_eq::float_eq!(xs, ys, abs <= 0.1) && 0.0 <= xs && xs <= 1.0
+    if d1 + d2 >= line_len - buffer && d1 + d2 <= line_len + buffer {
+        true
+    } else {
+        false
+    }
 }

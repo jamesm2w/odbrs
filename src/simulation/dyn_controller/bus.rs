@@ -1,4 +1,4 @@
-use std::{collections::{VecDeque, HashSet}, sync::Arc, hash::Hash};
+use std::{collections::{VecDeque, HashSet}, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use eframe::epaint::{Shape, Stroke, Color32, pos2};
@@ -78,9 +78,9 @@ impl Bus {
         let random_edge_i = rand::thread_rng().gen_range(0..=adjacency.len() - 1);
         let edge = adjacency.get(random_edge_i).unwrap();
         let edge_data = &graph.get_edgelist()[edge];
-
         let agent_pos = graph.get_nodelist()[random_node].point;
         let locking_node = if edge_data.start_id == *random_node { edge_data.end_id } else { edge_data.start_id };
+        
         Bus { id, max_capacity, graph: graph.clone(), prev_node: *random_node, cur_edge: *edge, agent_pos, locking_node, ..Default::default() }
     }
 
@@ -234,9 +234,6 @@ impl Bus {
                         // move agent_pos along the line segment by distance_to_move
                         let dir = normalise((segment_end.0 - segment_start.0, segment_end.1 - segment_start.1));
                         self.agent_pos = (self.agent_pos.0 + dir.0 * distance_to_move, self.agent_pos.1 + dir.1 * distance_to_move);
-                        distance_to_move = 0.0;
-                        // println!("Moved {} units [Along line segment]", distance_to_move);
-                        has_moved = true;
                         return;
                     }
                 }
@@ -250,9 +247,7 @@ impl Bus {
             if has_moved && distance_to_move > 0.0 {
                 // We have moved the full distance to move along the current edge
                 // Move to the next edge
-                // println!("path: {:?}", self.path);
                 self.prev_node = *next_node; // Node we're coming from
-                // let next_node = self.path.front().unwrap();
 
                 match self.path.front() {
                     Some(&next_node) => {
@@ -282,35 +277,13 @@ impl Bus {
 
 }
 
-// fn point_on_linesegment(pos: (f64, f64), start: &(f64, f64), end: &(f64, f64)) -> bool {
-//     let crossprod = (pos.1 - start.1) * (end.0 - start.0) - (pos.0 - start.0) * (end.1 - start.1);
-//     if crossprod.abs() > 0.00001 {
-//         return false;
-//     }
-//     let dotprod = (pos.0 - start.0) * (end.0 - start.0) + (pos.1 - start.1) * (end.1 - start.1);
-//     if dotprod < 0.0 {
-//         return false;
-//     }
-//     let squared_length = (end.0 - start.0) * (end.0 - start.0) + (end.1 - start.1) * (end.1 - start.1);
-//     if dotprod > squared_length {
-//         return false;
-//     }
-
-//     true
-// }
-
+// Based on collision detection for a point and a line. Point is on a line if the distance to each point is equal to lenght
 fn point_on_linesegment(pos: (f64, f64), start: &(f64, f64), end: &(f64, f64)) -> bool {
-    // let xs = (pos.0 - start.0) / (end.0 - start.0);
-    // let ys = (pos.1 - start.1) / (end.1 - start.1);
-    // println!("pos {:?} start {:?}\tend {:?}\ton_line {:?}\txs {:?}\tys {:?}", pos, start, end, float_eq::float_eq!(xs, ys, abs <= 0.1) && 0.0 <= xs && xs <= 1.0, xs, ys);
-    // (float_eq::float_eq!(xs, ys, abs <= 0.1) && 0.0 <= xs && xs <= 1.0) || (pos.0 == start.0 && pos.1 == start.1) || (pos.0 == end.0 && pos.1 == end.1)
     let d1 = distance(pos, *start);
     let d2 = distance(pos, *end);
-
     let line_len = distance(*start, *end);
-
     let buffer = 0.1;
-    // println!("pos {:?} start {:?}\tend{:?}\ton_line {:?}\tdsum {:?}\tdistance{:?}", pos, start, end, d1 + d2 >= line_len - buffer && d1 + d2 <= line_len + buffer, d1 + d2, line_len);
+
     if d1 + d2 >= line_len - buffer && d1 + d2 <= line_len + buffer {
         true
     } else {

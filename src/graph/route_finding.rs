@@ -67,7 +67,7 @@ pub fn find_route(graph: &Graph, source: u128, dest: u128) -> Vec<u128> {
     }
 
     let mut path = Vec::new();
-    let mut dist = 0;
+    // let mut dist = 0;
     let mut prev_node = dest;
 
     loop {

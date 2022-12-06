@@ -1,8 +1,8 @@
 use std::{sync::Arc, collections::VecDeque};
 
-use chrono::{DateTime, Utc, Date};
+use chrono::{DateTime, Utc};
 
-use crate::graph::{route_finding, transform::convert_point, Graph, self};
+use crate::graph::{route_finding, transform::convert_point, Graph};
 
 use self::bus::Bus;
 
@@ -18,9 +18,9 @@ pub struct DynamicController {
 }
 
 impl DynamicController {
-    pub fn new() -> Self {
-        DynamicController { id: 0, buses: vec![], demands: VecDeque::new() }
-    }
+    // pub fn new() -> Self {
+    //     DynamicController { id: 0, buses: vec![], demands: VecDeque::new() }
+    // }
 
     // Construct a new/partial solution -- try assignments and see which minimises 
     pub fn constructive(&mut self, graph: &Graph) {
@@ -76,7 +76,7 @@ impl DynamicController {
     }
 
     // destroy a solution
-    pub fn destructive(&mut self, graph: &Graph) {
+    pub fn destructive(&mut self, _graph: &Graph) {
         println!("Run Destructive Heuristic");
         // Go through and destroy the solutions and reclaim the demand into the main demand list
         for bus in self.buses.iter_mut() {
