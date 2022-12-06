@@ -11,7 +11,7 @@ use rand::Rng;
 
 use crate::{graph::Graph, resource::load_image::{DemandResources, ImageSelection, ImageData}};
 
-const TICK_DEMAND: usize = 108;
+const TICK_DEMAND: usize = 10; // 108
 
 #[derive(Debug)]
 enum DemandThreadMessage {
@@ -27,12 +27,19 @@ pub struct DemandGenerator {
     demand_queue: RwLock<VecDeque<Demand>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Demand(pub (f32, f32), pub (f32, f32), pub DateTime<Utc>);
 
 impl DemandGenerator {
+
+    // Send a ticks worth of demand request to the demand generator
     pub fn tick(&self, time: DateTime<Utc>) {
-        match self.thread_gen_tx.send(DemandThreadMessage::Yield(*self.resources.get_demand_levels().get(time.hour() as usize - 1).unwrap() as usize, time)) {
+        self.send_demand_request(*self.resources.get_demand_levels().get(time.hour() as usize - 1).unwrap() as usize, time);
+    }
+
+    // Send a given amount of demand to the demand generator thread
+    pub fn send_demand_request(&self, amount: usize, time: DateTime<Utc>) {
+        match self.thread_gen_tx.send(DemandThreadMessage::Yield(amount, time)) {
             Ok(()) => (),
             Err(err) => panic!("Sending to demand gen thread failed {}", err),
         };
@@ -58,6 +65,7 @@ impl DemandGenerator {
         &self.demand_queue
     }
 
+    // Creates a demand generator and runs a thread which does the actual generation
     pub fn start(resources: DemandResources, graph: Arc<Graph>) -> Arc<DemandGenerator> {
         let (tx, rx) = sync_channel(1);
         let demand_gen = DemandGenerator {
@@ -77,9 +85,13 @@ impl DemandGenerator {
             loop {
                 match rx.try_recv() {
                     Ok(DemandThreadMessage::Yield(amount, time)) => {
-                        let diff = amount - buffer.len();
+                        let diff = amount.saturating_sub(buffer.len());
+
+                        if diff == 0 {
+                            buffer.drain(0..buffer.len());
+                        }
                         
-                        buffer.append(&mut demand_gen_ref.generate_amount(amount, &time));
+                        buffer.append(&mut demand_gen_ref.generate_amount(diff, &time));
                         last_time = time;
 
                         match demand_gen_ref.demand_queue.write() {
@@ -123,8 +135,9 @@ impl DemandGenerator {
                 self.resources.get_images().get(&i).expect("Couldn't randomise selection").clone()
             },
             ImageSelection::TimeBasedChoice(map) => {
-                let i = map.get(time.hour() as usize - 1).expect("Couldn't get time based index");
-                // println!("choice {:?}", i);
+                let i = map.get(time.hour() as usize).expect("Couldn't get time based index");
+                
+                println!("time {:?} choice {:?}", time.hour(), i);
                 self.resources.get_images().get(&i).expect("Couldn't select based on time").clone()
             }
         }

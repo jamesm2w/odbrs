@@ -15,6 +15,7 @@ pub use types::*;
 pub mod bounding;
 pub mod transform;
 pub mod types;
+pub mod route_finding;
 
 /// Graph is the underlying data that the display and simulation use
 /// It's loaded with data by the resource loader
@@ -22,7 +23,7 @@ pub mod types;
 ///  - on each simulation tick the algorithms should be able to read from it
 ///
 ///  - module should be able to respond to controls from the gui to mutate itself
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Graph {
     graph: AdjacencyList,
     transform: RwLock<transform::Transform>,
@@ -64,7 +65,7 @@ impl Module for Graph {
     }
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Default, Deserialize, Debug)]
 pub struct GraphConfig {
     node_colour: String,
 

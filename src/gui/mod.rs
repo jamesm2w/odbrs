@@ -10,7 +10,7 @@ use std::{
 use chrono::{DateTime, Utc};
 use eframe::{
     egui::{CentralPanel, SidePanel, Ui},
-    epaint::{pos2, vec2, Color32, Shape, Stroke},
+    epaint::{vec2, Color32, Shape, Stroke},
     NativeOptions,
 };
 use serde::Deserialize;
@@ -106,7 +106,7 @@ pub struct AppParameters {
 #[derive(Default, Debug)]
 pub struct AppState {
     pub sim_state: (DateTime<Utc>, SimulationState),
-    pub agent_pos: Vec<((f64, f64), u128, u128)>,
+    pub agent_display_data: Vec<Shape>,
     pub demand_gen: Option<Arc<DemandGenerator>>,
 }
 
@@ -114,11 +114,7 @@ pub struct AppState {
 pub enum AppMessage {
     // Placeholder(()),
     // SimulationState(DateTime<Utc>, SimulationState),
-    SimulationStateWithAgents(
-        DateTime<Utc>,
-        SimulationState,
-        Vec<((f64, f64), u128, u128)>,
-    ),
+    SimulationStateWithAgents(DateTime<Utc>, SimulationState, Vec<Shape>),
     NoteDemandGen(Arc<DemandGenerator>),
 }
 
@@ -136,7 +132,7 @@ impl App {
             AppMessage::SimulationStateWithAgents(u, st, agents) => {
                 let mut state = self.state.borrow_mut();
                 state.sim_state = (u, st);
-                state.agent_pos = agents;
+                state.agent_display_data = agents;
                 // println!("got agent pos {:?}", state.agent_pos[0]);
             }
             AppMessage::NoteDemandGen(demand_gen) => {
@@ -192,11 +188,11 @@ impl eframe::App for App {
                 // ui.add(eframe::egui::Image::new(texture, ui.available_size()));
                 self.graph.view(ui);
 
+                let transform = self.graph.get_transform().read().unwrap();
 
-                let transfrom = self.graph.get_transform().read().unwrap();
-
-                let top_left = transfrom.map_to_screen(transfrom.left as _, transfrom.top as _);
-                let bot_right = transfrom.map_to_screen(transfrom.right as _, transfrom.bottom as _);
+                let top_left = transform.map_to_screen(transform.left as _, transform.top as _);
+                let bot_right =
+                    transform.map_to_screen(transform.right as _, transform.bottom as _);
 
                 ui.painter().add(Shape::rect_stroke(
                     eframe::epaint::Rect {
@@ -207,55 +203,13 @@ impl eframe::App for App {
                     Stroke::new(2.0, Color32::RED),
                 ));
 
-                // Draw the agent positions
-                // TODO: Refactor this to be nicer
-                ui.painter().extend(
-                    self.state
-                        .borrow()
-                        .agent_pos
-                        .iter()
-                        .map(|((x, y), edge, node)| {
-                            let agent = Shape::circle_stroke(
-                                self.graph
-                                    .get_transform()
-                                    .read()
-                                    .unwrap()
-                                    .map_to_screen(*x, *y),
-                                3.0,
-                                Stroke::new(2.0, Color32::YELLOW),
-                            );
+                // Draw the agent positions (customisable by agent type)
+                ui.painter()
+                    .extend(self.state.borrow().agent_display_data.iter().map(|shp| {
+                        transform.map_shape_to_screen(shp.clone())
+                    }).collect());
 
-                            let node_point = &self.graph.get_nodelist().get(node).unwrap().point;
-                            let node = Shape::circle_stroke(
-                                self.graph
-                                    .get_transform()
-                                    .read()
-                                    .unwrap()
-                                    .map_to_screen(node_point.0 as _, node_point.1 as _),
-                                2.0,
-                                Stroke::new(1.0, Color32::LIGHT_GREEN),
-                            );
-
-                            let edge_points = &self.graph.get_edgelist().get(edge).unwrap().points;
-                            let line = Shape::line(
-                                edge_points
-                                    .iter()
-                                    .map(|(i, j)| {
-                                        self.graph
-                                            .get_transform()
-                                            .read()
-                                            .unwrap()
-                                            .map_to_screen(*i, *j)
-                                    })
-                                    .collect(),
-                                Stroke::new(1.0, Color32::LIGHT_GREEN),
-                            );
-
-                            Shape::Vec(vec![agent, node, line])
-                        })
-                        .collect(),
-                );
-
+                // Draw demand data?
                 if let Some(demand_gen) = &self.state.borrow().demand_gen {
                     ui.painter().extend(
                         demand_gen

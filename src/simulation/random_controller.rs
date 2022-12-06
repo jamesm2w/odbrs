@@ -1,15 +1,17 @@
 use std::sync::Arc;
+use chrono::{DateTime, Utc};
 // TODO: Fix the issue with movement in random controller
 use eframe::epaint::Vec2;
 use rand::Rng;
 
 use crate::graph::Graph;
 
-use super::Controller;
+use super::{Controller, Agent, demand::DemandGenerator};
 
 #[derive(Default, Debug)]
 pub struct RandomController {
     pub agentc: usize,
+    pub agents: Vec<RandomAgent>,
 }
 
 #[derive(Debug)]
@@ -19,12 +21,28 @@ pub struct RandomAgent {
     pub cur_edge: u128,       // Edge it's currently traversing
     pub velocity: f64, // Velocity of the agent (+ive = from prev->other end, -ive = reverse) IN MS-1
     pub position: (f64, f64), // Current map-coord position of the agent
+    pub graph: Arc<Graph>
+}
+
+impl Agent for RandomAgent {
+
+    fn get_graph(&self) -> Arc<Graph> {
+        self.graph.clone()
+    }
+
+    fn get_display_information(&self) -> ((f64, f64), u128, u128) {
+        (self.position, self.cur_edge, self.prev_node)
+    }
 }
 
 impl Controller for RandomController {
     type Agent = RandomAgent;
 
-    fn spawn_agent(&mut self, graph: std::sync::Arc<crate::graph::Graph>) -> Self::Agent {
+    fn get_agents(&self) -> &Vec<Self::Agent> {
+        &self.agents
+    }
+
+    fn spawn_agent(&mut self, graph: std::sync::Arc<crate::graph::Graph>) -> &Self::Agent {
         self.agentc += 1;
         let mut rng = rand::thread_rng();
 
@@ -40,24 +58,23 @@ impl Controller for RandomController {
             prev_node: *node,
             velocity: 13.4112 * 60.0, // 30 MPH into ms-1 * 60 for 1 minute per tick
             position: graph.get_nodelist().get(node).unwrap().point,
+            graph: graph.clone()
         };
+        self.agents.push(agent);
         // //println!("Spawned agent {:?}", agent);
-        agent
+        self.agents.last().expect("Error creating random agent")
     }
 
-    fn update_agents(
-        &mut self,
-        agents: &mut Vec<Self::Agent>,
-        graph: std::sync::Arc<crate::graph::Graph>,
-    ) {
-        for agent in agents.iter_mut() {
-            self.move_agent(agent, graph.clone());
+    fn update_agents(&mut self, graph: std::sync::Arc<crate::graph::Graph>, _demand: Arc<DemandGenerator>, time: DateTime<Utc>) {
+        // self.agents.iter_mut().for_each(|agent| self.move_agent(agent, graph.clone()));
+        for agent in self.agents.iter_mut() {
+            Self::move_agent(agent, graph.clone());
         }
     }
 }
 
 impl RandomController {
-    fn move_agent(&mut self, agent: &mut RandomAgent, graph: Arc<Graph>) {
+    fn move_agent(agent: &mut RandomAgent, graph: Arc<Graph>) {
         let mut distance_to_move = agent.velocity as f32;
         //println!("NEW AGENT agent #{:?} moving {:?}", agent.id, distance_to_move);
         while distance_to_move > 0.0 {
@@ -113,14 +130,14 @@ impl RandomController {
                         //println!("\tAgent move to end of this line segment");
                         agent_pos = end;
                         distance_to_move -= line_distance_remaining.length(); // reduce distance needed by amount moved
-                        //println!("\t\tnow pos={:?} move left={:?}", agent_pos, distance_to_move);
+                                                                              //println!("\t\tnow pos={:?} move left={:?}", agent_pos, distance_to_move);
                     } else {
                         //println!("\tAgent can move along this line segment");
                         // Can move a the given distance along this segment
                         agent_pos += ((end - start) / (end - start).length()) * distance_to_move;
                         distance_to_move = 0.0; // no need to move any more distance
-                        //println!("\t\tnow pos={:?} move left={:?}", agent_pos, distance_to_move);
-                        // break;
+                                                //println!("\t\tnow pos={:?} move left={:?}", agent_pos, distance_to_move);
+                                                // break;
                     }
                 } else {
                     //println!("\tAgent is not on this segment");
@@ -132,7 +149,13 @@ impl RandomController {
             if distance_to_move > 0.0 {
                 //println!("\tNeed to move to next graph edge pos {:?} end {:?}", agent.position, next_node.point );
 
-                let dist_left = Vec2 { x: agent.position.0 as _, y: agent.position.1 as _ } - Vec2 { x: next_node.point.0 as _, y: next_node.point.1 as _ };
+                let dist_left = Vec2 {
+                    x: agent.position.0 as _,
+                    y: agent.position.1 as _,
+                } - Vec2 {
+                    x: next_node.point.0 as _,
+                    y: next_node.point.1 as _,
+                };
                 //println!("\t remaining dist {:?}", dist_left.length());
 
                 // Need to move to next node in graph
@@ -144,7 +167,9 @@ impl RandomController {
                     // //println!("random index {:?} out of {:?}", next_edge_i, adjacency.len());
                     agent.cur_edge = adjacency.get(next_edge_i).unwrap().clone();
                     let current_edge = graph
-                        .get_edgelist().get(&agent.cur_edge).expect("Current Edge Was not an Edge");
+                        .get_edgelist()
+                        .get(&agent.cur_edge)
+                        .expect("Current Edge Was not an Edge");
 
                     let next_node_id = if current_edge.end_id == agent.prev_node {
                         current_edge.start_id
@@ -156,11 +181,11 @@ impl RandomController {
                         break;
                     }
                 }
-                
+
                 // DEBUG:  This shouldn't be necessary really
                 agent.position = next_node.point;
             }
-            
+
             //println!("pos={:?} distance_left={:?}", agent.position, distance_to_move);
             //println!();
         }
@@ -173,14 +198,13 @@ fn point_on_line(start: Vec2, end: Vec2, test: Vec2) -> bool {
     let xs = (test.x - start.x) / (end.x - start.x);
     let ys = (test.y - start.y) / (end.y - start.y);
 
-
     // let AB = test - start;
     // let AC = end - start;
 
     // let cross = AB.x * AC.y - (AB.y * AC.x)
-    // cross == 0  
+    // cross == 0
 
     // //println!("\txs: {:?} ys: {:?}", xs, ys);
-        
-    float_eq::float_eq!(xs, ys, abs <= 0.1) && 0.0 <= xs && xs <= 1.0 
+
+    float_eq::float_eq!(xs, ys, abs <= 0.1) && 0.0 <= xs && xs <= 1.0
 }

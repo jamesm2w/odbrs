@@ -1,4 +1,4 @@
-use eframe::epaint::{pos2, Pos2, Vec2};
+use eframe::epaint::{pos2, CircleShape, PathShape, Pos2, Shape, TextShape, Vec2};
 
 use super::AdjacencyList;
 
@@ -44,7 +44,7 @@ impl Transform {
 
     // Increase the zoom level of the graph
     pub fn zoom(&mut self, scroll_delta: f32) {
-        self.zoom *= scroll_delta;// / 50.0;
+        self.zoom *= scroll_delta; // / 50.0;
 
         self.zoom = self.zoom.clamp(0.0001, 100.0)
     }
@@ -68,6 +68,39 @@ impl Transform {
             ((((y / self.zoom) + self.dragy) / -self.scale) + self.top) as f64,
         )
     }
+
+    pub fn map_shape_to_screen(&self, shape: Shape) -> Shape {
+        match shape {
+            Shape::Vec(vec) => Shape::Vec(
+                vec.into_iter()
+                    .map(|shp| self.map_shape_to_screen(shp))
+                    .collect(),
+            ),
+            Shape::Circle(circle @ CircleShape { center, .. }) => Shape::Circle(CircleShape {
+                center: self.map_to_screen(center.x as _, center.y as _),
+                ..circle
+            }),
+            Shape::Path(PathShape {
+                ref points,
+                closed,
+                fill,
+                stroke,
+            }) => Shape::Path(PathShape {
+                points: points
+                    .iter()
+                    .map(|pos| self.map_to_screen(pos.x as _, pos.y as _))
+                    .collect(),
+                closed,
+                fill,
+                stroke,
+            }),
+            Shape::Text(text @ TextShape { pos, .. }) => Shape::Text(TextShape {
+                pos: self.map_to_screen(pos.x as _, pos.y as _),
+                ..text
+            }),
+            _ => unimplemented!("Haven't implemented this shape mapping yet")
+        }
+    }
 }
 
 // Inline single arugment transformations
@@ -79,4 +112,9 @@ fn map_x_screen(transform: &Transform, x: f32) -> f32 {
 #[inline]
 fn map_y_screen(transform: &Transform, y: f32) -> f32 {
     (((y - transform.top) * -transform.scale) - transform.dragy) * transform.zoom
+}
+
+// write a function which converts a f32 point to f64 point
+pub fn convert_point(point: (f32, f32)) -> (f64, f64) {
+    (point.0 as f64, point.1 as f64)
 }
