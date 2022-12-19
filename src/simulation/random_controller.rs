@@ -30,8 +30,21 @@ impl Agent for RandomAgent {
         self.graph.clone()
     }
 
-    fn get_display_information(&self) -> ((f64, f64), u128, u128) {
-        (self.position, self.cur_edge, self.prev_node)
+    fn get_current_element(&self) -> super::dyn_controller::bus::CurrentElement {
+        super::dyn_controller::bus::CurrentElement::Edge { edge: self.cur_edge, prev_node: self.prev_node }
+    }
+
+    fn get_next_node(&self) -> u128 {
+        let edge_data = self.graph.get_edgelist().get(&self.cur_edge).expect("Edge not found");
+        if edge_data.start_id == self.prev_node {
+            edge_data.end_id
+        } else {
+            edge_data.start_id
+        }
+    }
+
+    fn get_position(&self) -> (f64, f64) {
+        self.position
     }
 }
 

@@ -190,18 +190,18 @@ impl eframe::App for App {
 
                 let transform = self.graph.get_transform().read().unwrap();
 
-                let top_left = transform.map_to_screen(transform.left as _, transform.top as _);
-                let bot_right =
-                    transform.map_to_screen(transform.right as _, transform.bottom as _);
+                // let top_left = transform.map_to_screen(transform.left as _, transform.top as _);
+                // let bot_right =
+                //     transform.map_to_screen(transform.right as _, transform.bottom as _);
 
-                ui.painter().add(Shape::rect_stroke(
-                    eframe::epaint::Rect {
-                        min: top_left,
-                        max: bot_right,
-                    },
-                    0.0,
-                    Stroke::new(2.0, Color32::RED),
-                ));
+                // ui.painter().add(Shape::rect_stroke(
+                //     eframe::epaint::Rect {
+                //         min: top_left,
+                //         max: bot_right,
+                //     },
+                //     0.0,
+                //     Stroke::new(2.0, Color32::RED),
+                // ));
 
                 // Draw the agent positions (customisable by agent type)
                 ui.painter()

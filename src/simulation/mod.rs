@@ -8,16 +8,16 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
-use eframe::epaint::{Shape, Color32, Stroke, pos2};
+use eframe::epaint::{pos2, Color32, Shape, Stroke};
 use serde::Deserialize;
 
-use crate::{graph::Graph, gui::AppMessage, Module, resource::load_image::DemandResources};
+use crate::{graph::Graph, gui::AppMessage, resource::load_image::DemandResources, Module};
 
-use self::demand::DemandGenerator;
+use self::{demand::DemandGenerator, dyn_controller::bus::CurrentElement};
 
-pub mod random_controller;
 pub mod demand;
 pub mod dyn_controller;
+pub mod random_controller;
 
 /// Simulation controls the running of the simulation
 /// - Simluation tick does stuff at intervals
@@ -80,24 +80,28 @@ impl Module for Simulation {
         parameters: Self::Parameters,
     ) -> Result<Self::ReturnType, Box<dyn std::error::Error>> {
         let time = std::time::Instant::now();
-        
+
         self.i = Utc::now(); // TODO: Move into config?
         self.rx = Some(parameters.rx);
         self.gui_tx = Some(parameters.gui_tx);
 
-        self.graph = parameters.graph; 
+        self.graph = parameters.graph;
         self.speed = 100; // TODO: Config this?
 
-        for _ in 0..1 { // TODO: Change this number -- config maybe?
+        for _ in 0..1 {
+            // TODO: Change this number -- config maybe?
             self.controller.spawn_agent(self.graph.clone());
         }
 
         // TODO: Issue with this starting too soon?
-        self.demand_generator = Some(DemandGenerator::start(parameters.demand_resources, self.graph.clone()));
+        self.demand_generator = Some(DemandGenerator::start(
+            parameters.demand_resources,
+            self.graph.clone(),
+        ));
 
         self.send_state();
         self.send_demand_gen();
-        
+
         Ok(println!(
             "[{}] Initialised in {:?}",
             self.get_name(),
@@ -122,12 +126,11 @@ pub struct SimulationParameters {
     pub graph: Arc<Graph>,
     pub rx: Receiver<SimulationMessage>,
     pub gui_tx: Sender<AppMessage>,
-    pub demand_resources: DemandResources
+    pub demand_resources: DemandResources,
 }
 
 impl Simulation {
     pub fn start(&mut self) {
-
         loop {
             match self.rx.as_ref().unwrap().try_recv() {
                 Ok(msg) => self.handle_message(msg),
@@ -152,26 +155,34 @@ impl Simulation {
 
     // TODO: Basically just add some logic that this is caled when the state has actually changed (to stop flooding the GUI thread)
     pub fn send_state(&self) {
-        match self.gui_tx
+        match self
+            .gui_tx
             .as_ref()
             .unwrap()
             .send(AppMessage::SimulationStateWithAgents(
                 self.i.clone(),
                 self.state.clone(),
-                self.controller.get_agents()
+                self.controller
+                    .get_agents()
                     .iter()
-                    .map(|agent| agent.display() ) // (agent.position.clone(), agent.cur_edge, agent.prev_node)
+                    .map(|agent| agent.display()) // (agent.position.clone(), agent.cur_edge, agent.prev_node)
                     .collect(),
             )) {
-                Ok(_) => (),
-                Err(err) => eprintln!("Send Error {:?}", err)
-            }
+            Ok(_) => (),
+            Err(err) => eprintln!("Send Error {:?}", err),
+        }
     }
 
     pub fn send_demand_gen(&self) {
-        match self.gui_tx.as_ref().unwrap().send(AppMessage::NoteDemandGen(self.demand_generator.as_ref().unwrap().clone())) {
-            Ok(()) => {},
-            Err(err) => eprintln!("Error Sending Demand gen instance: {}", err)
+        match self
+            .gui_tx
+            .as_ref()
+            .unwrap()
+            .send(AppMessage::NoteDemandGen(
+                self.demand_generator.as_ref().unwrap().clone(),
+            )) {
+            Ok(()) => {}
+            Err(err) => eprintln!("Error Sending Demand gen instance: {}", err),
         }
     }
 
@@ -181,11 +192,11 @@ impl Simulation {
             SimulationMessage::ShutdownThread => {
                 self.state = SimulationState::Stopped;
                 self.demand_generator.as_ref().unwrap().shutdown();
-            },
+            }
             SimulationMessage::ChangeState(state) => {
                 self.state = state;
                 self.send_state();
-            },
+            }
             SimulationMessage::ChangeSpeed(speed) => self.speed = speed,
             // _ => (),
         }
@@ -199,8 +210,11 @@ impl Simulation {
         // self.demand_generator.as_ref().unwrap().tick(self.i);
 
         // println!("Sim tick {:?}", self.i);
-        self.controller
-            .update_agents(self.graph.clone(), self.demand_generator.as_ref().unwrap().clone(), self.i)
+        self.controller.update_agents(
+            self.graph.clone(),
+            self.demand_generator.as_ref().unwrap().clone(),
+            self.i,
+        )
     }
 }
 
@@ -211,29 +225,76 @@ pub trait Controller {
 
     fn get_agents(&self) -> &Vec<Self::Agent>;
 
-    fn update_agents(&mut self, graph: Arc<Graph>, demand: Arc<DemandGenerator>, time: DateTime<Utc>);
+    fn update_agents(
+        &mut self,
+        graph: Arc<Graph>,
+        demand: Arc<DemandGenerator>,
+        time: DateTime<Utc>,
+    );
 }
 
 pub trait Agent {
-
     fn get_graph(&self) -> Arc<Graph>;
-
-    // get (position, current edge, and prev node)
-    fn get_display_information(&self) -> ((f64, f64), u128, u128);
+    fn get_position(&self) -> (f64, f64);
+    fn get_current_element(&self) -> CurrentElement;
+    fn get_next_node(&self) -> u128;
 
     // get a shape representing the agent -- default just based on current position and node/edge information
     fn display(&self) -> Shape {
-        let (position, edge, prev_node) = self.get_display_information();
-        let graph = self.get_graph();
-        let edge_data = graph.get_edgelist().get(&edge).expect("Edge not found");
-        let node_data = graph.get_nodelist().get(&prev_node).expect("Node not found");
-                        
-        Shape::Vec(vec![
-            Shape::circle_stroke( pos2(position.0 as _, position.1 as _), 3.0, Stroke::new(2.0, Color32::YELLOW)),
-            Shape::circle_stroke( pos2(node_data.point.0 as _, node_data.point.1 as _), 2.0, Stroke::new(1.0, Color32::LIGHT_GREEN)),
-            Shape::line(edge_data.points.iter().map(|&(x, y)| {
-                pos2(x as _, y as _)
-            }).collect(), Stroke::new(1.0, Color32::LIGHT_GREEN))
-        ])
+        default_display(self)
+    }
+}
+
+pub fn default_display<T: Agent + ?Sized>(agent: &T) -> Shape {
+    let position = agent.get_position();
+    let element = agent.get_current_element();
+    let next_node = agent.get_next_node();
+    let graph = agent.get_graph();
+
+    match element {
+        // Hasn't been placed on an element yet
+        CurrentElement::PreGenerated => Shape::circle_stroke(
+            pos2(position.0 as _, position.1 as _),
+            3.0,
+            Stroke::new(2.0, Color32::LIGHT_GREEN),
+        ),
+        // Currently Positioned on a node
+        CurrentElement::Node(node) => {
+            let node_data = graph.get_nodelist().get(&node).expect("Node not found");
+            Shape::circle_stroke(
+                pos2(node_data.point.0 as _, node_data.point.1 as _),
+                3.0,
+                Stroke::new(2.0, Color32::LIGHT_GREEN),
+            )
+        },
+        // Currently Positioned some point on an edge
+        CurrentElement::Edge{edge, prev_node} => {
+            let edge_data = graph.get_edgelist().get(&edge).expect("Edge not found");
+            let node_data = graph
+                .get_nodelist()
+                .get(&prev_node)
+                .expect("Node not found");
+
+            Shape::Vec(vec![
+                Shape::circle_stroke(
+                    pos2(position.0 as _, position.1 as _),
+                    3.0,
+                    Stroke::new(2.0, Color32::YELLOW),
+                ),
+                Shape::circle_stroke(
+                    pos2(node_data.point.0 as _, node_data.point.1 as _),
+                    2.0,
+                    Stroke::new(1.0, Color32::LIGHT_GREEN),
+                ),
+                Shape::line(
+                    edge_data
+                        .points
+                        .iter()
+                        .map(|&(x, y)| pos2(x as _, y as _))
+                        .collect(),
+                    Stroke::new(1.0, Color32::LIGHT_GREEN),
+                ),
+            ])
+        }
     }
 }
