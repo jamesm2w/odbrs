@@ -2,7 +2,7 @@ use std::{collections::{HashSet, HashMap, VecDeque}, sync::Arc};
 
 use crate::graph::Graph;
 
-use super::bus::{Bus, Status};
+use super::bus::{Bus, Status, Passenger};
 
 // Simple representation of waypoints and the actions available at each
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -34,8 +34,16 @@ impl DirForest {
     // Insert a new waypoint with a dependency into the forest
     pub fn insert(&mut self, parent: Option<Waypoint>, child: Waypoint) {
         match parent {
-            Some(parent) => {
-                self.children.get(&parent).unwrap().insert(child);
+            Some(parent_data) => {
+
+                self.children.entry(parent_data)
+                    .and_modify(|f| { f.insert(child); })
+                    .or_insert_with(|| {
+                        let mut set = HashSet::new();
+                        set.insert(child);
+                        set
+                    });
+                // self.children.get(&parent_data).unwrap().insert(child);
             },
             None => {
                 self.roots.insert(child);
@@ -71,16 +79,18 @@ impl DirForest {
         &self.roots
     }
 
-    pub fn get_children(&self, parent: Waypoint) -> &HashSet<Waypoint> {
-        self.children.get(&parent).unwrap_or(&HashSet::new())
+    pub fn get_children(&mut self, parent: Waypoint) -> &HashSet<Waypoint> {
+        self.children.entry(parent).or_default()
     }
 }
 
-pub fn bus_waypoints(bus: &mut Bus) -> DirForest {
+pub fn bus_waypoints(bus: &Bus) -> DirForest {
+    // println!("Collect waypoints for bus {}", bus.agent_id);
     let mut waypoints = DirForest::default();
 
     // Passengers on the bus only need to go to their destination
     for passenger in bus.passengers.iter() {
+        // println!("Current passenger. Must dropoff at {}", passenger.dest_node);
         waypoints.insert(None, Waypoint::Dropoff(passenger.dest_node));
     }
 
@@ -89,6 +99,8 @@ pub fn bus_waypoints(bus: &mut Bus) -> DirForest {
         
         let mut single_valid_passenger = false;
         for passenger in bus.assignment.get(source_node).unwrap() {
+            // println!("Passenger at source node. Must pickup at {} and dropoff at {}", source_node, passenger.dest_node);
+            // println!("Passenger status: {:?}", passenger.status);
             match passenger.status {
                 Status::Waiting(_) | Status::TravelStart(_) => {
                     waypoints.insert(Some(Waypoint::Pickup(*source_node)), Waypoint::Dropoff(passenger.dest_node));
@@ -104,6 +116,14 @@ pub fn bus_waypoints(bus: &mut Bus) -> DirForest {
         }
     }
 
+    // println!("waypoints: {:?}", waypoints);
+    waypoints
+}
+
+pub fn bus_waypoints_with_passenger(bus: &Bus, passenger: &Passenger) -> DirForest {
+    let mut waypoints = bus_waypoints(bus);
+    waypoints.insert(Some(Waypoint::Pickup(passenger.source_node)), Waypoint::Dropoff(passenger.dest_node));
+    waypoints.insert(None, Waypoint::Pickup(passenger.source_node));
     waypoints
 }
 

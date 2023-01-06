@@ -18,6 +18,7 @@ use self::{demand::DemandGenerator, dyn_controller::bus::CurrentElement};
 pub mod demand;
 pub mod dyn_controller;
 pub mod random_controller;
+pub mod static_controller;
 
 /// Simulation controls the running of the simulation
 /// - Simluation tick does stuff at intervals
@@ -88,7 +89,7 @@ impl Module for Simulation {
         self.graph = parameters.graph;
         self.speed = 100; // TODO: Config this?
 
-        for _ in 0..1 {
+        for _ in 0..100 {
             // TODO: Change this number -- config maybe?
             self.controller.spawn_agent(self.graph.clone());
         }

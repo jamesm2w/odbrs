@@ -20,6 +20,7 @@ impl PartialOrd for State {
     }
 }
 
+// Perform dijkstra's algorithm to find the shortest path between two nodes
 pub fn find_route(graph: &Graph, source: u128, dest: u128) -> Vec<u128> {
     let mut distances = HashMap::new();
     let mut prev = HashMap::new();

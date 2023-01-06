@@ -4,9 +4,9 @@ use chrono::{DateTime, Utc};
 use eframe::epaint::{Shape, Stroke, Color32, pos2};
 use rand::Rng;
 
-use crate::{graph::{Graph}, simulation::{Agent, default_display}};
+use crate::{graph::{Graph, route_finding}, simulation::{Agent, default_display}};
 
-use super::waypoints::{bus_waypoints, create_ordering, Waypoint};
+use super::waypoints::{bus_waypoints, create_ordering, Waypoint, bus_waypoints_with_passenger};
 
 pub enum Action {
     Wait, // Stay at this node for this tick
@@ -75,6 +75,10 @@ pub struct Bus {
     pub next_node: u128, // Next node the agent is travelling to; the "locking node"
 }
 
+const STROKES: [Stroke; 2] = [
+    Stroke { width: 2.0, color: Color32::LIGHT_BLUE }, Stroke {  width: 1.8, color: Color32::LIGHT_RED }
+];
+
 impl Agent for Bus {
 
     fn get_graph(&self) -> Arc<Graph> {
@@ -97,19 +101,25 @@ impl Agent for Bus {
         let mut shapes = vec![];
         let base_shape = default_display(self);
 
-        let mut demand = self.path_waypoints.iter().map(|node| {
+        let mut waypoints = self.path_waypoints.iter().map(|node| {
             let node_data = self.graph.get_nodelist().get(&node.node()).expect("Node not found");
-            Shape::circle_filled(pos2(node_data.point.0 as _, node_data.point.1 as _), 3.0, Color32::LIGHT_YELLOW)
+            Shape::circle_filled(pos2(node_data.point.0 as _, node_data.point.1 as _), 3.0, Color32::DEBUG_COLOR)
+        }).collect::<Vec<_>>();
+
+        let mut sources = self.assignment.iter().filter(|(_, vec)| vec.len() > 0).map(|(node, _)| {
+            let node_data = self.graph.get_nodelist().get(node).expect("Node not found");
+            Shape::circle_filled(pos2(node_data.point.0 as _, node_data.point.1 as _), 1.0, Color32::RED)
         }).collect::<Vec<_>>();
 
         let path = Shape::line(self.path_full.iter().map(|node| {
             let node_data = self.graph.get_nodelist().get(node).expect("Node not found");
             pos2(node_data.point.0 as _, node_data.point.1 as _)
-        }).collect(), Stroke::new(2.0, Color32::LIGHT_BLUE));
+        }).collect(), STROKES[(self.agent_id % 2) as usize]); //Stroke::new(2.0, Color32::LIGHT_BLUE)
 
-        shapes.append(&mut demand);
+        shapes.append(&mut waypoints);
         shapes.push(path);
         shapes.push(base_shape);
+        shapes.append(&mut sources);
 
         Shape::Vec(shapes)
     }
@@ -121,21 +131,33 @@ impl Agent for Bus {
 impl Bus {
     
     fn handle_node(&mut self, node: u128) -> Action {
-        let passengers_at_this_node = self.assignment.get(&node).unwrap_or(&vec![]);
-        // loop waiting passengers and add to bus
-        for passenger in passengers_at_this_node {
-            if self.rem_capacity > 0 {
-                self.passengers.push(passenger.clone());
-                self.rem_capacity -= 1;
-            }
-        }
+        
+        // Add waiting passengers to the bus
+        let passengers_at_this_node = self.assignment.get_mut(&node);
+        match passengers_at_this_node {
+            Some(passengers) => {
+                for i in 0..passengers.len() {
+                    if self.rem_capacity > 0 {
+                        let mut passenger = passengers.swap_remove(i);
+                        passenger.status = Status::OnBus(Utc::now()); // Passenger has been picked up by the bus
+                        self.passengers.push(passenger);
+                        self.rem_capacity -= 1;
+                    }
+                }
+            },
+            None => {}
+        };
 
         // loop passengers on bus and remove if they have reached their destination
-        for passenger in self.passengers.iter() {
+        for passenger in self.passengers.iter_mut() {
             if passenger.dest_node == node {
+                // TODO: add count to this
+                passenger.status = Status::TavelDest(0); // Passenger has now finished bus journey and should move towards their destination 
+                
                 self.rem_capacity += 1;
             }
         }
+        // TODO: should really not just delete this, move them out & clean up for statistics, etc.
         self.passengers.retain(|passenger| passenger.dest_node != node);
 
         // TODO: check if there are timeline constraints which means the bus needs to wait at this node
@@ -161,6 +183,7 @@ impl Bus {
             graph: graph.clone(),
             agent_id: id,
             max_capacity,
+            rem_capacity: max_capacity,
             current_el: CurrentElement::Edge { edge: *edge, prev_node: *random_node },
             current_pos: agent_pos,
             next_node: locking_node,
@@ -177,27 +200,65 @@ impl Bus {
         // Remove a random amount of them
         // Update waypoinys and paths?
     
-    pub fn constructive_dont_mutate(&self, passenger: Passenger) {}
+    // TODO: needs working tests -- this panics sometimes? not been able to reproduce it.
+    pub fn what_if_bus_had_passenger(&self, passenger: &Passenger) -> f64 {
+        let mut waypoints = bus_waypoints_with_passenger(self, passenger);
+        let path = create_ordering(self.next_node, &mut waypoints, self.graph.clone());
+        let mut path_len = 0.0;
+        for i in 0..path.len() - 1 {
+            let u = path[i];
+            let v = path[i + 1];
+            let point_u = self.graph.get_nodelist().get(&u.node()).unwrap().point;
+            let point_v = self.graph.get_nodelist().get(&v.node()).unwrap().point;
+            path_len += distance(point_u, point_v);
+        }
 
-    pub fn add_passenger_to_assignment(&mut self, passenger: Passenger) {
+        path_len
+    }
+
+    // Adds the passenger to the assignment by placing them in their source node waiting list
+    pub fn add_passenger_to_assignment(&mut self, mut passenger: Passenger) {
+        passenger.status = Status::TravelStart(0); // passenger should now be making its way to the bus stop! to get picked up
         self.assignment.entry(passenger.source_node).or_insert_with(|| Vec::new()).push(passenger);
     }
 
+    // Adds a passenger into the solution and updates pathing as appropriate
+    // TODO: Assigned passengers need to move towards their pick-up station
     pub fn constructive(&mut self, passenger: Passenger) {
         self.add_passenger_to_assignment(passenger);
 
+        println!("Constructive");
+        println!("\tBus {} has {} passengers", self.agent_id, self.passengers.len());
+        // println!("\tAssignment: {:?}", self.assignment);
+
         // Uses GreedyBFS to find an ordering of the waypoints for the bus
-        let mut path = create_ordering(
+        let path = create_ordering(
             self.next_node, 
             &mut bus_waypoints(self), 
             self.graph.clone()
         );
         self.path_waypoints = path;
         
-        // TODO: Create the full path between waypoints
-        // self.create_path();
+        println!("Waypoint Path: {:?}", self.path_waypoints);
+
+        // Create the full path between waypoints
+        self.create_path();
     }
 
+    // Helper to get the length of the waypoint path (straight line between waypoints)
+    pub fn get_waypoint_path_len(&self) -> f64 {
+        let mut path_len = 0.0;
+        for i in 0..self.path_waypoints.len() - 1 {
+            let u = self.path_waypoints[i].node();
+            let v = self.path_waypoints[i + 1].node();
+            let point_u = self.graph.get_nodelist().get(&u).unwrap().point;
+            let point_v = self.graph.get_nodelist().get(&v).unwrap().point;
+            path_len += distance(point_u, point_v);
+        }
+        path_len
+    }
+
+    // Destructive function to basically remove some passengers from the bus assignment
     // TODO: maybe optimise loops in this mostly AI generated function
     pub fn destructive(&mut self) -> Vec<Passenger> {
         // loop throught assignent and remove 50% which aren't currently passengers
@@ -222,79 +283,30 @@ impl Bus {
         removed
     }
 
-    // pub fn create_path(&m ut self) {
-    //     let source = self.locking_node;
-    //     let nodes = self.assignment.iter().map(|e| *e).collect::<Vec<_>>();
-    //     let waypoints = route_finding::best_first_route(source, nodes, &self.graph);
-    //     let mut prev = source;
-    //     self.path = VecDeque::new();
+    // Use the waypoints list to create the full path
+    pub fn create_path(&mut self) {
+        // println!("Create full path");
+        let mut path = VecDeque::new();
 
-    //     for pt in waypoints {
-    //         if pt == prev {
-    //             continue;
-    //         }
-    //         // println!("Route to {:?} from {:?}", pt, prev);
-    //         let subroute = route_finding::find_route(&self.graph, prev, pt);
-    //         // println!("Subroute {:?}", subroute);
-    //         self.path.extend(subroute.into_iter().rev().skip(1)); // Reverse and skip the source to stop dupe
-    //         prev = *self.path.back().unwrap();
-    //     }
-
-    //     self.path.push_front(source);
-    // }
-
-    // pub fn assign_demand(&mut self, (src, dest, dateime): (u128, u128, DateTime<Utc>)) {
-    //     self.assignment.insert(src);
-    //     self.assignment.insert(dest);
-
-    //     self.create_path();
-    // }
-
-    // // Construct a route with the given requests
-    // pub fn greedy_construct_route(&mut self, requests: Vec<(u128, DateTime<Utc>)>) {
-    //     // find origin from requests then try to assign such that feasible
-
-    // }
-
-    // pub fn route_with_node(&self, new_req: u128, dest_req: u128, graph: &Graph) -> VecDeque<u128> {
-    //     let source = self.locking_node;
-    //     let mut nodes = Vec::from_iter(self.assignment.iter().map(|a| *a));
-    //     nodes.push(new_req);
-    //     nodes.push(dest_req);
-    //     println!("\treq src: {:?}\t req dest: {:?}", new_req, dest_req);
-    //     // println!("nodes: {:?}", nodes.iter().map(|x| graph.get_nodelist().contains_key(x)).collect::<Vec<_>>());
-        
-    //     let waypoints = route_finding::best_first_route(source, nodes, &graph);
-        
-    //     // println!("waypoints: {:?}", waypoints);
-    //     let mut route = VecDeque::new();
-    //     let mut prev = source;
-
-    //     for pt in waypoints {
-    //         if pt == prev {
-    //             continue;
-    //         }
-    //         // println!("Route to {:?} from {:?}", pt, prev);
-    //         let subroute = route_finding::find_route(&self.graph, prev, pt);
-    //         // println!("Subroute {:?}", subroute);
-    //         route.extend(subroute.into_iter().rev().skip(1)); // Reverse and skip the source to stop dupe
-    //         prev = *route.back().unwrap();
-    //     }
-
-    //     route
-    // }
-
-    // // Destory part of the route. Stochasticly choose some destinations to remove (also can't remove anything locked)
-    // // remove a random amount of passengers assigned and return them (back to the central controller)
-    // // destroy the path so that we have to rebuild it after a constructive phase
-    // pub fn destroy_route(&mut self) -> VecDeque<Demand> {
-        
-    //     self.path.retain(|node| {
-    //         rand::thread_rng().gen_bool(0.5) || self.current_destinations.contains(node)
-    //     });
-        
-    //     VecDeque::new()
-    // }
+        for waypoint in self.path_waypoints.iter() {
+            
+            match path.back() {
+                Some(node) => { // The last node in the path is the source for the next subroute
+                    let subroute = route_finding::find_route(&self.graph, *node, waypoint.node());
+                    // println!("\tsubroute from {:?} to {:?}: {:?}", node, waypoint.node(), subroute);
+                    path.extend(subroute.into_iter().rev().skip(1));
+                },
+                None => { // No node in the path, so just add the first waypoint 
+                    // start with the current node, or the previous node?
+                    // dbg!(self.current_el);
+                    path.push_back(waypoint.node()) 
+                }
+            }
+        }
+        path.pop_front(); // Remove the first node as it is the current node
+        // println!("Full path: {:?}", path);
+        self.path_full = path;
+    }
 
     /// for every stop s in route b
     ///     if arrival time at stop s < current time
@@ -314,18 +326,25 @@ impl Bus {
     ///             break out of loop
     /// return the lockpoint (index of the route)
 
+    // Actual movement function which moves the bus one step along the computed path
+    // TODO: Maybe run the "handle arrival at node" function somewhere in here...
     pub fn move_self(&mut self) {
         // No need to move agent if no path to follow
         if self.path_full.len() == 0 {
             return; // No path to follow
         }
 
-        let mut move_distance = 10.0;
+        println!("Move self");
+        println!("Current element: {:?}", self.current_el);
+        println!("Next node: {:?}", self.next_node);
+        // println!("Path: {:?}", self.path_full);
+
+        let mut move_distance = 804.672; //10.0; 804.672 = 13.4112 * 60.0 (13.4112 m/s * 60s)
         while move_distance > 0.0 {
             // Id of the edge we are currently on, or need to move along
             let moving_edge_id = match self.current_el {
                 CurrentElement::PreGenerated => unreachable!("The agent is trying to move before it has been generated"),
-                CurrentElement::Edge { edge, prev_node } => {
+                CurrentElement::Edge { edge, .. } => {
                     edge
                 }, 
                 CurrentElement::Node(node) => {
@@ -342,19 +361,23 @@ impl Bus {
             let next_node_data = &self.graph.get_nodelist()[&next_node];
 
             let line = if next_node_data.point == *moving_edge_data.points.first().unwrap() {
+                moving_edge_data.points.iter().rev().map(|x| *x).collect() // if the next node is the first point on the edge, we need to reverse the line
+            } else if next_node_data.point == *moving_edge_data.points.last().unwrap() {
                 moving_edge_data.points.clone()
             } else {
-                moving_edge_data.points.iter().rev().map(|x| *x).collect()
+                unreachable!("The next node is not on the edge we are moving along");
             };
 
             let mut has_moved = false;
             for i in 0..line.len() - 1 {
                 let segment_start = line[i];
                 let segment_end = line[i+1];
+
                 if point_on_linesegment(self.current_pos, &segment_start, &segment_end) {
+                    // println!("On line segment {}/{}", i, line.len());
                     let distance_remaining = distance(self.current_pos, segment_end);
-                    
-                    if move_distance > distance_remaining {
+                    // println!("Distance remaining: {}", distance_remaining);
+                    if move_distance > distance_remaining { // if move distance is > distance to end of line segment, move to end of line segment. Will then consider the next segment.
                         self.current_pos = segment_end;
                         move_distance -= distance_remaining;
                         has_moved = true;
@@ -363,6 +386,8 @@ impl Bus {
                         self.current_pos = (self.current_pos.0 + dir.0 * move_distance, self.current_pos.1 + dir.1 * move_distance);
                         return;
                     }
+                } else {
+                    // println!("Not on line segment {}/{}", i, line.len());
                 }
             }
         
@@ -370,26 +395,52 @@ impl Bus {
                 // println!("Didn't move this iteration distance left {:?}", distance_to_move);
                 return;
             }
-
+            
+            // If we've moved along the segments and still have distance to traverse, we're moving past the next node.
             if has_moved && move_distance > 0.0 {
-                // We have moved the full distance to move along the current edge
+                // We have moved the full distance to move along the current edge and are now at "self.next_node"
                 // Move to the next edge
-                let current_node = self.path_full.pop_front(); // Also should be self.next_node
+                let current_node = self.next_node; //self.path_full.pop_front().unwrap(); // Also should be the current self.next_node before we update it
+                self.next_node = match self.path_full.pop_front() {
+                    Some(next_node) => {
+                        // Find edge which connects current node to the next node in the path
+                        let edge_id = self.graph.get_adjacency()[&current_node].iter().find(|e| {
+                            let edge = &self.graph.get_edgelist()[e];
+                            edge.start_id == next_node || edge.end_id == next_node
+                        }).unwrap(); // TODO: fix potential panic here?
 
-                self.current_el = match self.path_full.front() {
-                    // There is a next node on the path
-                    Some(&next_node) => {
-                        let cur_edge = *self.graph.get_adjacency()[&self.next_node].iter().find(|e| {
-                            let edge = &self.graph.get_edgelist()[*e];
-                            edge.end_id == next_node || edge.start_id == next_node
-                        }).unwrap(); // TODO: fix panic here
-
-                        self.next_node = next_node;
-                        CurrentElement::Edge { edge: cur_edge, prev_node: self.next_node }
+                        self.current_el = CurrentElement::Edge { edge: *edge_id, prev_node: current_node };
+                        next_node
                     },
-                    // No Next Node on the path
-                    None => CurrentElement::Node(next_node)
+                    None => {
+                        // We have reached the end of the path
+                        self.current_el = CurrentElement::Node(current_node);
+                        return;
+                    }
                 };
+                
+                self.handle_node(current_node);
+
+                // println!("Moving to next node!!");
+                // println!("New Current node: {:?}", current_node);
+
+                // self.current_el = match self.path_full.front() {
+                //     // There is a next node on the path
+                //     Some(next_node) => {
+                //         let cur_edge = *self.graph.get_adjacency()[&self.next_node].iter().find(|e| {
+                //             let edge = &self.graph.get_edgelist()[*e];
+                //             edge.end_id == next_node || edge.start_id == next_node
+                //         }).unwrap(); 
+
+                //         // self.next_node = next_node; // we update the next_node, so now current_node is the previous node
+                //         CurrentElement::Edge { edge: cur_edge, prev_node: current_node } // this probably panics at the end of a path cause cur_node is empty
+                //     },
+                //     // No Next Node on the path
+                //     None => CurrentElement::Node(next_node)
+                // };
+
+                // let current_node_data = &self.graph.get_nodelist()[&current_node];
+                // self.current_pos = current_node_data.point;
             }
         }
     }
@@ -420,50 +471,3 @@ fn normalise(a: (f64, f64)) -> (f64, f64) {
     let mag = ((a.0).powi(2) + (a.1).powi(2)).sqrt();
     (a.0 / mag, a.1 / mag)
 }
-
-        //  Moves itself one tick along the path towards its next path point
-        // // self.agent_pos = (self.agent_pos.0+1.0, self.agent_pos.1)
-        // let mut distance_to_move = 10.0;//13.4112 * 60.0; // TODO: switch to tickspeed * velocity
-        // while distance_to_move > 0.0 {
-        //     // prev_node, cur_edge, agent_pos
-        //     let edge = &self.graph.get_edgelist()[&self.cur_edge];
-            
-        //     let next_path_node = self.path.front();
-        //     let next_node = match next_path_node {
-        //         // Go towards the next path node if it's connected else go to the locking point node
-        //         Some(node) => if edge.start_id == *node || edge.end_id == *node { node } else { &self.locking_node },
-        //         None => &self.locking_node
-        //     };
-        //     // let next_node = self.path.front().unwrap_or(&self.locking_node); //if self.prev_node == edge.start_id { &edge.end_id } else { &edge.start_id });
-        //     let next_node_data = &self.graph.get_nodelist()[next_node];
-            
-        //     let line = if next_node_data.point == *edge.points.first().unwrap() {
-        //         edge.points.iter().rev().collect::<Vec<_>>() // if the "start" is the destination flip the line
-        //     } else {
-        //         edge.points.iter().collect::<Vec<_>>()
-        //     };
-
-        //     let mut has_moved = false;
-            
-        //     for i in 0..line.len() - 1 {
-        //         let segment_start = line[i];
-        //         let segment_end = line[i+1];
-
-        //         if point_on_linesegment(self.agent_pos, segment_start, segment_end) {
-        //             // println!("ON LINE! pos: {:?}\tsegment start: {:?}\tsegment end: {:?}", self.agent_pos, segment_start, segment_end);
-        //             let dist_remaining = distance(self.agent_pos, *segment_end);
-        //             // println!("dist remaining: {:?}", dist_remaining);
-        //             if distance_to_move > dist_remaining {
-        //                 // Set agent_pos to segment_end and subtract distance moved from total distance to move
-        //                 self.agent_pos = *segment_end;
-        //                 distance_to_move -= dist_remaining;
-        //                 // println!("Moved {} units [To end of segment]", dist_remaining);
-        //                 has_moved = true;
-        //             } else {
-        //                 // move agent_pos along the line segment by distance_to_move
-        //                 let dir = normalise((segment_end.0 - segment_start.0, segment_end.1 - segment_start.1));
-        //                 self.agent_pos = (self.agent_pos.0 + dir.0 * distance_to_move, self.agent_pos.1 + dir.1 * distance_to_move);
-        //                 return;
-        //             }
-        //         }
-        //     }

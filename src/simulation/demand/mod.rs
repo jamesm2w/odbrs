@@ -137,7 +137,7 @@ impl DemandGenerator {
             ImageSelection::TimeBasedChoice(map) => {
                 let i = map.get(time.hour() as usize).expect("Couldn't get time based index");
                 
-                println!("time {:?} choice {:?}", time.hour(), i);
+                // println!("time {:?} choice {:?}", time.hour(), i);
                 self.resources.get_images().get(&i).expect("Couldn't select based on time").clone()
             }
         }
