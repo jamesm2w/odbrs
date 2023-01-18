@@ -137,17 +137,17 @@ impl DynamicController {
 
 impl Controller for DynamicController {
     type Agent = Bus;
-
-    fn get_agents(&self) -> &Vec<Self::Agent> {
-        &self.buses
+    
+    fn get_agents(&self) -> Vec<&Self::Agent> {
+        self.buses.iter().collect()
     }
 
-    fn spawn_agent(&mut self, graph: Arc<crate::graph::Graph>) -> &Self::Agent {
+    fn spawn_agent(&mut self, graph: Arc<crate::graph::Graph>) -> Option<&Self::Agent> {
         println!("Spawning new bus");
         self.id += 1;
         let bus = Bus::new(graph.clone(), 20, self.id);
         self.buses.push(bus);
-        self.buses.last().expect("Couldn't create new agent")
+        Some(self.buses.last().expect("Couldn't create new agent"))
     }
 
     fn update_agents(

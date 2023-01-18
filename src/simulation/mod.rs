@@ -7,18 +7,20 @@ use std::{
     time::Duration,
 };
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Utc, NaiveDateTime, NaiveTime};
 use eframe::epaint::{pos2, Color32, Shape, Stroke};
 use serde::Deserialize;
 
 use crate::{graph::Graph, gui::AppMessage, resource::load_image::DemandResources, Module};
 
-use self::{demand::DemandGenerator, dyn_controller::bus::CurrentElement};
+use self::{demand::DemandGenerator, dyn_controller::bus::CurrentElement, static_controller::routes::NetworkData};
 
 pub mod demand;
 pub mod dyn_controller;
 pub mod random_controller;
 pub mod static_controller;
+
+const STATIC_ONLY: bool = false; // true = static only, false = dynamic only
 
 /// Simulation controls the running of the simulation
 /// - Simluation tick does stuff at intervals
@@ -31,6 +33,8 @@ pub mod static_controller;
 pub struct Simulation {
     // Reference to the graph struct we're using
     graph: Arc<Graph>,
+    // Reference to the bus network data we're using
+    network_data: Arc<NetworkData>,
 
     // Recieve Mesages passed in by other threads
     rx: Option<Receiver<SimulationMessage>>,
@@ -45,7 +49,8 @@ pub struct Simulation {
 
     demand_generator: Option<Arc<DemandGenerator>>,
 
-    controller: dyn_controller::DynamicController,
+    dyn_controller: dyn_controller::DynamicController,
+    static_controller: static_controller::StaticController,
     // agents: Vec<random_controller::RandomAgent>,
 }
 
@@ -82,16 +87,27 @@ impl Module for Simulation {
     ) -> Result<Self::ReturnType, Box<dyn std::error::Error>> {
         let time = std::time::Instant::now();
 
-        self.i = Utc::now(); // TODO: Move into config?
+        // self.i = Utc::now(); // TODO: Move into config?
+        self.i = DateTime::from_utc(NaiveDateTime::new(Utc::now().date_naive(), NaiveTime::from_hms(6, 0, 0)), Utc);
         self.rx = Some(parameters.rx);
         self.gui_tx = Some(parameters.gui_tx);
 
         self.graph = parameters.graph;
         self.speed = 100; // TODO: Config this?
 
-        for _ in 0..100 {
-            // TODO: Change this number -- config maybe?
-            self.controller.spawn_agent(self.graph.clone());
+        if !STATIC_ONLY {
+            for _ in 0..100 {
+                // TODO: Change this number -- config maybe?
+                self.dyn_controller.spawn_agent(self.graph.clone());
+            }
+        } else {
+
+            println!("Loading network data...");
+            let timer = std::time::Instant::now();
+            self.network_data = Arc::new(static_controller::routes::load_saved_network_data().unwrap());
+            println!("Loaded network data in {:?}", timer.elapsed());
+            self.static_controller.set_network_data(self.network_data.clone());
+            self.static_controller.spawn_agent(self.graph.clone());
         }
 
         // TODO: Issue with this starting too soon?
@@ -163,11 +179,15 @@ impl Simulation {
             .send(AppMessage::SimulationStateWithAgents(
                 self.i.clone(),
                 self.state.clone(),
-                self.controller
-                    .get_agents()
-                    .iter()
-                    .map(|agent| agent.display()) // (agent.position.clone(), agent.cur_edge, agent.prev_node)
-                    .collect(),
+                if !STATIC_ONLY {
+                    self.dyn_controller
+                        .get_agents()
+                        .into_iter()
+                        .map(|agent| agent.display()) // (agent.position.clone(), agent.cur_edge, agent.prev_node)
+                        .collect()
+                } else {
+                    self.static_controller.get_display()
+                },
             )) {
             Ok(_) => (),
             Err(err) => eprintln!("Send Error {:?}", err),
@@ -211,20 +231,30 @@ impl Simulation {
         // self.demand_generator.as_ref().unwrap().tick(self.i);
 
         // println!("Sim tick {:?}", self.i);
-        self.controller.update_agents(
-            self.graph.clone(),
-            self.demand_generator.as_ref().unwrap().clone(),
-            self.i,
-        )
+        if !STATIC_ONLY {
+            self.dyn_controller.update_agents(
+                self.graph.clone(),
+                self.demand_generator.as_ref().unwrap().clone(),
+                self.i,
+            )
+        } else {
+            self.static_controller.update_agents(
+                self.graph.clone(),
+                self.demand_generator.as_ref().unwrap().clone(),
+                self.i,
+            )
+        }
     }
 }
 
 pub trait Controller {
     type Agent: Agent;
 
-    fn spawn_agent(&mut self, graph: Arc<Graph>) -> &Self::Agent;
+    fn spawn_agent(&mut self, graph: Arc<Graph>) -> Option<&Self::Agent>;
 
-    fn get_agents(&self) -> &Vec<Self::Agent>;
+    fn get_agents(&self) -> Vec<&Self::Agent>;
+
+    // fn agents_iter(&self) -> Self::AgentIterator;
 
     fn update_agents(
         &mut self,
@@ -267,9 +297,9 @@ pub fn default_display<T: Agent + ?Sized>(agent: &T) -> Shape {
                 3.0,
                 Stroke::new(2.0, Color32::LIGHT_GREEN),
             )
-        },
+        }
         // Currently Positioned some point on an edge
-        CurrentElement::Edge{edge, prev_node} => {
+        CurrentElement::Edge { edge, prev_node } => {
             let edge_data = graph.get_edgelist().get(&edge).expect("Edge not found");
             let node_data = graph
                 .get_nodelist()

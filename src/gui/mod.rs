@@ -9,7 +9,7 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use eframe::{
-    egui::{CentralPanel, SidePanel, Ui},
+    egui::{CentralPanel, SidePanel, Ui, Id},
     epaint::{vec2, Color32, Shape, Stroke},
     NativeOptions,
 };
@@ -174,7 +174,7 @@ impl eframe::App for App {
             Ok(msg) => self.handle_message(msg),
             Err(_) => (),
         };
-
+        
         CentralPanel::default()
             .frame(eframe::egui::Frame::none().fill(Color32::DARK_GRAY))
             .show(ctx, |ui| {
@@ -207,7 +207,7 @@ impl eframe::App for App {
                 ui.painter()
                     .extend(self.state.borrow().agent_display_data.iter().map(|shp| {
                         transform.map_shape_to_screen(shp.clone())
-                    }).collect());
+                    }).collect::<Vec<_>>());
 
                 // Draw demand data?
                 if let Some(demand_gen) = &self.state.borrow().demand_gen {
@@ -244,12 +244,13 @@ impl eframe::App for App {
                                     //TODO: tidy up this lol
                                 ])
                             })
-                            .collect(),
+                            .collect::<Vec<_>>(),
                     )
                 }
             });
 
-        SidePanel::new(eframe::egui::panel::Side::Left, "control_panel")
+        
+        SidePanel::new(eframe::egui::panel::Side::Left, Id::new("control_panel"))
             .default_width(300.0)
             .resizable(false)
             .show(ctx, |ui| {

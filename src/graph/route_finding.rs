@@ -1,4 +1,4 @@
-use std::{collections::{BinaryHeap, HashMap, VecDeque}, cmp::Ordering};
+use std::{collections::{BinaryHeap, HashMap, VecDeque}, cmp::Ordering, sync::Arc};
 
 use super::Graph;
 
@@ -149,4 +149,31 @@ pub fn closest_node(point: (f64, f64), graph: &Graph) -> u128 {
     }
 
     closest
+}
+
+// Given two edges find the shortest path between them (in terms of edges to follow)
+pub fn best_first_edge_route(source_edge: u128, dest_edge: u128, graph: Arc<Graph>) -> Vec<u128> {
+
+    let dest_data = &graph.get_edgelist()[&dest_edge];
+    let dest_start = dest_data.start_id;
+    let dest_end = dest_data.end_id;
+    
+    let source_data = &graph.get_edgelist()[&source_edge];
+    let source_start = source_data.start_id;
+    let source_end = source_data.end_id;
+
+    let stst = find_distance(&graph, &source_start, &dest_start);
+    let sten = find_distance(&graph, &source_start, &dest_end);
+    let enst = find_distance(&graph, &source_end, &dest_start);
+    let enen = find_distance(&graph, &source_end, &dest_end);
+
+    if stst < sten && stst < enst && stst < enen {
+        find_route(&graph, source_start, dest_start)
+    } else if sten < stst && sten < enst && sten < enen {
+        find_route(&graph, source_start, dest_end)
+    } else if enst < stst && enst < sten && enst < enen {
+        find_route(&graph, source_end, dest_start)
+    } else {
+        find_route(&graph, source_end, dest_end)
+    }
 }

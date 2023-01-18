@@ -98,6 +98,7 @@ impl Transform {
                 pos: self.map_to_screen(pos.x as _, pos.y as _),
                 ..text
             }),
+            Shape::Noop => Shape::Noop,
             _ => unimplemented!("Haven't implemented this shape mapping yet")
         }
     }

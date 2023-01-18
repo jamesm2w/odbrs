@@ -4,6 +4,7 @@ use crate::{
     graph::{self, AdjacencyList},
     gui, simulation, Module, resource::load_image::load_images,
 };
+use gtfs_structures::Gtfs;
 use serde::Deserialize;
 
 use self::load_image::{DemandResourcesConfig, DemandResources};
@@ -139,5 +140,10 @@ impl Resources {
 
             Some(adjlist)
         }
+    }
+
+    fn load_gtfs_data(&self, config: ()) -> Option<Gtfs> {
+        // TODO: Load gtfs data from file
+        None
     }
 }

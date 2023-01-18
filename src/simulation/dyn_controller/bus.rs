@@ -76,7 +76,7 @@ pub struct Bus {
 }
 
 const STROKES: [Stroke; 2] = [
-    Stroke { width: 2.0, color: Color32::LIGHT_BLUE }, Stroke {  width: 1.8, color: Color32::LIGHT_RED }
+    Stroke { width: 2.0, color: Color32::LIGHT_BLUE }, Stroke {  width: 1.8, color: Color32::LIGHT_BLUE }
 ];
 
 impl Agent for Bus {
@@ -136,14 +136,26 @@ impl Bus {
         let passengers_at_this_node = self.assignment.get_mut(&node);
         match passengers_at_this_node {
             Some(passengers) => {
-                for i in 0..passengers.len() {
+
+                let mut i = 0;
+                while i < passengers.len() {
                     if self.rem_capacity > 0 {
-                        let mut passenger = passengers.swap_remove(i);
+                        let mut passenger = passengers.remove(i);
                         passenger.status = Status::OnBus(Utc::now()); // Passenger has been picked up by the bus
                         self.passengers.push(passenger);
                         self.rem_capacity -= 1;
+                    } else {
+                        i += 1;
                     }
                 }
+                // for i in 0..passengers.len() {
+                //     if self.rem_capacity > 0 {
+                //         let mut passenger = passengers.swap_remove(i); // TODO: fix panic here for removing something > len
+                //         passenger.status = Status::OnBus(Utc::now()); // Passenger has been picked up by the bus
+                //         self.passengers.push(passenger);
+                //         self.rem_capacity -= 1;
+                //     }
+                // }
             },
             None => {}
         };

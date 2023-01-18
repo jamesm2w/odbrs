@@ -50,12 +50,12 @@ impl Agent for RandomAgent {
 
 impl Controller for RandomController {
     type Agent = RandomAgent;
-
-    fn get_agents(&self) -> &Vec<Self::Agent> {
-        &self.agents
+    
+    fn get_agents(&self) -> Vec<&Self::Agent> {
+        self.agents.iter().collect()
     }
 
-    fn spawn_agent(&mut self, graph: std::sync::Arc<crate::graph::Graph>) -> &Self::Agent {
+    fn spawn_agent(&mut self, graph: std::sync::Arc<crate::graph::Graph>) -> Option<&Self::Agent> {
         self.agentc += 1;
         let mut rng = rand::thread_rng();
 
@@ -75,7 +75,7 @@ impl Controller for RandomController {
         };
         self.agents.push(agent);
         // //println!("Spawned agent {:?}", agent);
-        self.agents.last().expect("Error creating random agent")
+        Some(self.agents.last().expect("Error creating random agent"))
     }
 
     fn update_agents(&mut self, graph: std::sync::Arc<crate::graph::Graph>, _demand: Arc<DemandGenerator>, _time: DateTime<Utc>) {

@@ -102,7 +102,7 @@ impl Graph {
 
     pub fn view(&self, ui: &mut Ui) {
         let drag_delta = ui
-            .interact(ui.clip_rect(), Id::null(), Sense::drag())
+            .interact(ui.clip_rect(), Id::new("interact_rect"), Sense::drag())
             .drag_delta();
         let scroll_delta = ui.input().zoom_delta(); //* 50.0; //ui.input().scroll_delta.y;
 
