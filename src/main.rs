@@ -5,10 +5,13 @@ use std::{
     thread,
 };
 
+use crate::analytics::AnalyticsPackage;
+
 mod graph;
 mod gui;
 mod resource;
 mod simulation;
+mod analytics;
 
 pub trait Module: Default {
     type ReturnType;
@@ -29,6 +32,7 @@ struct Main {
     pub resource_manager: resource::Resources,
     pub gui: gui::App,
     pub simulation: simulation::Simulation,
+    pub analytics: analytics::Analytics,
     pub graph: Arc<graph::Graph>,
 }
 
@@ -55,6 +59,9 @@ impl Module for Main {
         graph.init(gph, adjlist)?;
         self.graph = Arc::new(graph);
 
+        let analyticstx = self.analytics.init((), ())?;
+        analyticstx.send(AnalyticsPackage::None).unwrap();
+
         // Send stuff to the Simulation thread
         let (sim_tx, sim_rx) = mpsc::channel();
 
@@ -68,6 +75,7 @@ impl Module for Main {
                 graph: self.graph.clone(),
                 rx: sim_rx,
                 gui_tx: gui_tx.clone(),
+                analysis_tx: analyticstx,
                 demand_resources,
             },
         )?;
@@ -94,17 +102,26 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut odbrs = Main::default();
     odbrs.init(PathBuf::from(r#"data/config.toml"#), ())?;
 
-    thread::spawn(move || {
+    let handle = thread::spawn(move || {
         // Simulation start here in other thread
         println!("Simulation Thread Started");
         odbrs.simulation.start();
         println!("Simulation Thread Ended");
     });
 
+    // let analytics_handle = thread::spawn(move || {
+        
+    // });
+
     println!("GUI Thread Started");
-    // GUI start here in main thread
     odbrs.gui.start();
     println!("GUI Thread Ended");
 
+    handle.join().expect("Couldn't join the simulation thread");
+
+    println!("Running analytics");
+    odbrs.analytics.run();
+    println!("Analytics finished"); 
+    
     Ok(())
 }

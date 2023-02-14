@@ -89,7 +89,7 @@ pub fn find_distance(graph: &Graph, source: &u128, dest: &u128) -> u32 {
     let src = graph.get_nodelist()[source].point;
     let dest = graph.get_nodelist()[dest].point;
 
-    (f64::abs(src.0 - dest.0).powi(2) + f64::abs(src.1 - dest.1).powi(2)).sqrt() as u32
+    ((src.0 - dest.0).powi(2) + (src.1 - dest.1).powi(2)) as u32
 }
 
 pub fn best_first_route(source: u128, mut nodes: Vec<u128>, graph: &Graph) -> Vec<u128> {
@@ -151,7 +151,8 @@ pub fn closest_node(point: (f64, f64), graph: &Graph) -> u128 {
     closest
 }
 
-// Given two edges find the shortest path between them (in terms of edges to follow)
+// Given two edges find the shortest path between them, works by comparing which nodes are the closest pair
+// then return that path 
 pub fn best_first_edge_route(source_edge: u128, dest_edge: u128, graph: Arc<Graph>) -> Vec<u128> {
 
     let dest_data = &graph.get_edgelist()[&dest_edge];
@@ -168,12 +169,20 @@ pub fn best_first_edge_route(source_edge: u128, dest_edge: u128, graph: Arc<Grap
     let enen = find_distance(&graph, &source_end, &dest_end);
 
     if stst < sten && stst < enst && stst < enen {
-        find_route(&graph, source_start, dest_start)
+        let mut route = find_route(&graph, source_start, dest_start);
+        route.push(dest_end);
+        route
     } else if sten < stst && sten < enst && sten < enen {
-        find_route(&graph, source_start, dest_end)
+        let mut route = find_route(&graph, source_start, dest_end);
+        route.push(dest_start);
+        route
     } else if enst < stst && enst < sten && enst < enen {
-        find_route(&graph, source_end, dest_start)
+        let mut route = find_route(&graph, source_end, dest_start);
+        route.push(dest_end);
+        route
     } else {
-        find_route(&graph, source_end, dest_end)
+        let mut route = find_route(&graph, source_end, dest_end);
+        route.push(dest_start);
+        route
     }
 }

@@ -164,8 +164,11 @@ pub fn create_ordering(starting_point: u128, waypoints: &mut DirForest, graph: A
 }
 
 // Currently just squared euclidean distance
-// TODO: use a better norm?
+// TODO: use a better norm? FIX PANIC HERE
 pub fn graph_distance(graph: Arc<Graph>, source: u128, dest: u128) -> f64 {
+    if !graph.get_nodelist().contains_key(&source) || !graph.get_nodelist().contains_key(&dest) {
+        println!("One of these is not in the graph!? \t Source: {} {}, Dest: {} {}", source, graph.get_nodelist().contains_key(&source), dest, graph.get_nodelist().contains_key(&dest));
+    }
     let source_pos = graph.get_nodelist().get(&source).unwrap().point;
     let dest_pos = graph.get_nodelist().get(&dest).unwrap().point;
 

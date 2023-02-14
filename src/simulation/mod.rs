@@ -7,13 +7,16 @@ use std::{
     time::Duration,
 };
 
-use chrono::{DateTime, Utc, NaiveDateTime, NaiveTime};
+use chrono::{DateTime, NaiveDateTime, NaiveTime, Utc};
 use eframe::epaint::{pos2, Color32, Shape, Stroke};
 use serde::Deserialize;
 
-use crate::{graph::Graph, gui::AppMessage, resource::load_image::DemandResources, Module};
+use crate::{graph::Graph, gui::AppMessage, resource::load_image::DemandResources, Module, analytics::AnalyticsPackage};
 
-use self::{demand::DemandGenerator, dyn_controller::bus::CurrentElement, static_controller::routes::NetworkData};
+use self::{
+    demand::DemandGenerator, dyn_controller::bus::CurrentElement,
+    static_controller::routes::NetworkData,
+};
 
 pub mod demand;
 pub mod dyn_controller;
@@ -41,6 +44,9 @@ pub struct Simulation {
 
     // Send Messages to the GUI thread
     gui_tx: Option<Sender<AppMessage>>,
+
+    // Send Messages to the Analytics thread
+    analytics_tx: Option<Sender<AnalyticsPackage>>,
 
     i: DateTime<Utc>,
 
@@ -88,32 +94,46 @@ impl Module for Simulation {
         let time = std::time::Instant::now();
 
         // self.i = Utc::now(); // TODO: Move into config?
-        self.i = DateTime::from_utc(NaiveDateTime::new(Utc::now().date_naive(), NaiveTime::from_hms(6, 0, 0)), Utc);
+        self.i = DateTime::from_utc(
+            NaiveDateTime::new(Utc::now().date_naive(), NaiveTime::from_hms(5, 0, 0)),
+            Utc,
+        );
         self.rx = Some(parameters.rx);
         self.gui_tx = Some(parameters.gui_tx);
+
+        self.analytics_tx = Some(parameters.analysis_tx);
+        println!("[ANALYTICS] Received analytics {}", self.analytics_tx.is_some());
 
         self.graph = parameters.graph;
         self.speed = 100; // TODO: Config this?
 
         if !STATIC_ONLY {
+            self.dyn_controller.set_analytics(self.analytics_tx.clone());
+
             for _ in 0..100 {
                 // TODO: Change this number -- config maybe?
                 self.dyn_controller.spawn_agent(self.graph.clone());
             }
         } else {
-
             println!("Loading network data...");
             let timer = std::time::Instant::now();
-            self.network_data = Arc::new(static_controller::routes::load_saved_network_data().unwrap());
+            self.network_data =
+                Arc::new(static_controller::routes::load_saved_network_data().unwrap());
             println!("Loaded network data in {:?}", timer.elapsed());
-            self.static_controller.set_network_data(self.network_data.clone());
+            self.static_controller
+                .set_network_data(self.network_data.clone());
+            self.static_controller.set_analytics(self.analytics_tx.clone());
             self.static_controller.spawn_agent(self.graph.clone());
         }
 
-        // TODO: Issue with this starting too soon?
         self.demand_generator = Some(DemandGenerator::start(
             parameters.demand_resources,
             self.graph.clone(),
+            if !STATIC_ONLY {
+                Ok(self.graph.clone())
+            } else {
+                Err(self.network_data.clone())
+            }
         ));
 
         self.send_state();
@@ -143,6 +163,7 @@ pub struct SimulationParameters {
     pub graph: Arc<Graph>,
     pub rx: Receiver<SimulationMessage>,
     pub gui_tx: Sender<AppMessage>,
+    pub analysis_tx: Sender<AnalyticsPackage>,
     pub demand_resources: DemandResources,
 }
 

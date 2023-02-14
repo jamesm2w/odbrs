@@ -11,9 +11,10 @@ use rand::Rng;
 
 use crate::{graph::Graph, resource::load_image::{DemandResources, ImageSelection, ImageData}};
 
+use super::static_controller::routes::NetworkData;
+
 const TICK_DEMAND: usize = 10; // 108
 
-#[derive(Debug)]
 enum DemandThreadMessage {
     Yield(usize, DateTime<Utc>),
     Stop,
@@ -33,12 +34,16 @@ pub struct Demand(pub (f32, f32), pub (f32, f32), pub DateTime<Utc>);
 impl DemandGenerator {
 
     // Send a ticks worth of demand request to the demand generator
-    pub fn tick(&self, time: DateTime<Utc>) {
-        self.send_demand_request(*self.resources.get_demand_levels().get(time.hour() as usize - 1).unwrap() as usize, time);
+    pub fn _tick(&self, time: DateTime<Utc>) {
+        self._send_demand_request(*self.resources.get_demand_levels().get(time.hour() as usize - 1).unwrap() as usize, time);
+    }
+
+    pub fn get_demand_level(&self, time: &DateTime<Utc>) -> usize {
+        *self.resources.get_demand_levels().get(time.hour() as usize - 1).unwrap() as usize
     }
 
     // Send a given amount of demand to the demand generator thread
-    pub fn send_demand_request(&self, amount: usize, time: DateTime<Utc>) {
+    pub fn _send_demand_request(&self, amount: usize, time: DateTime<Utc>) {
         match self.thread_gen_tx.send(DemandThreadMessage::Yield(amount, time)) {
             Ok(()) => (),
             Err(err) => panic!("Sending to demand gen thread failed {}", err),
@@ -66,7 +71,7 @@ impl DemandGenerator {
     }
 
     // Creates a demand generator and runs a thread which does the actual generation
-    pub fn start(resources: DemandResources, graph: Arc<Graph>) -> Arc<DemandGenerator> {
+    pub fn start(resources: DemandResources, graph: Arc<Graph>, data: Result<Arc<Graph>, Arc<NetworkData>>) -> Arc<DemandGenerator> {
         let (tx, rx) = sync_channel(1);
         let demand_gen = DemandGenerator {
             resources,
@@ -91,7 +96,7 @@ impl DemandGenerator {
                             buffer.drain(0..buffer.len());
                         }
                         
-                        buffer.append(&mut demand_gen_ref.generate_amount(diff, &time));
+                        buffer.append(&mut demand_gen_ref.generate_amount(diff, &time, data.clone()));
                         last_time = time;
 
                         match demand_gen_ref.demand_queue.write() {
@@ -220,201 +225,78 @@ impl DemandGenerator {
     }
 
     // Generates an amount of demand
-    pub fn generate_amount(&self, amount: usize, time: &DateTime<Utc>) -> VecDeque<Demand> {
+    pub fn generate_amount(&self, amount: usize, time: &DateTime<Utc>, data: Result<Arc<Graph>, Arc<NetworkData>>) -> VecDeque<Demand> {
         let mut vec = VecDeque::with_capacity(amount);
-        for _ in 0..amount {
-            vec.push_back(self.generate_random_pixel(time));
+        while vec.len() < amount {
+            let demand = self.generate_random_pixel(time);
+            if should_accept_demand(&demand, data.clone()) {
+                vec.push_back(demand);
+            } else {
+                // vec.push_back(demand);
+                continue;
+            }
         }
         vec
     }
+
+    pub fn generate_scaled_amount(&self, scale: f64, time: &DateTime<Utc>, data: Result<Arc<Graph>, Arc<NetworkData>>) -> VecDeque<Demand> {
+        let amount = (self.get_demand_level(time) as f64 * scale) as usize;
+        self.generate_amount(amount, time, data)
+    }
 }
 
-// pub struct DemandGenerator {
+const HUMAN_WALKING_SPEED: f64 = 1.4; // m/s // TODO: is this consistent?
 
-//     // Reference to graph nodes, etc
-//     graph: Arc<Graph>,
+// Returns true if the demand should be rejected because it's more than 15 min from any bus-stop
+pub fn should_accept_demand(demand: &Demand, data: Result<Arc<Graph>, Arc<NetworkData>>) -> bool {
+    match data {
+        Ok(graph) => {
+            let mut min_src_dist = f64::MAX;
+            let mut min_dest_dist = f64::MAX;
+            
+            for (_, node) in graph.get_nodelist() {
+                let src_dist = distance(node.point, point64(demand.0));
+                let dest_dst = distance(node.point, point64(demand.1));
+                
+                if src_dist < min_src_dist {
+                    min_src_dist = src_dist;
+                }
 
-//     // Image
-//     image: Option<GrayImage>,
-//     normalisation_factor: u64,
+                if dest_dst < min_dest_dist {
+                    min_dest_dist = dest_dst;
+                }
+            }
+            
+            min_dest_dist / HUMAN_WALKING_SPEED < 15.0 * 60.0 && min_src_dist / HUMAN_WALKING_SPEED < 15.0 * 60.0
+        },
+        Err(network) => {
+            let mut min_src_dist = f64::MAX;
+            let mut min_dest_dist = f64::MAX;
+            
+            for (_, stop) in network.stops.iter() {
+                let src_dist = distance(stop.position(), point64(demand.0));
+                let dest_dist = distance(stop.position(), point64(demand.1));
 
-//     // Map dimension information to use when scaling things
-//     map_left: f64,
-//     map_top: f64,
-//     map_width: f64,
-//     map_height: f64,
+                if src_dist < min_src_dist {
+                    min_src_dist = src_dist;
+                }
 
-//     // Shared queue with the simulation thread to put demands when generated
-//     demand_queue: Arc<RwLock<VecDeque<Demand>>>,
-// }
+                if dest_dist < min_dest_dist {
+                    min_dest_dist = dest_dist;
+                }
+            }
 
-// / vec of images as geographical weights
-// / options such as "time" to select which image based on hour of day -- config and loaded at startup
-// / fall back of just random uniform over whole graph.
+            min_dest_dist / HUMAN_WALKING_SPEED < 15.0 * 60.0 && min_src_dist / HUMAN_WALKING_SPEED < 15.0 * 60.0
+        }
+    }
+}
 
-// / mapping
-// / x |-> x *   (map width / img width) + left map
-// / y |-> y * - (map width / img width) + top map
+fn distance(a: (f64, f64), b: (f64, f64)) -> f64 {
+    let xs = (a.0 - b.0).abs();
+    let ys = (a.1 - b.1).abs();
+    xs.hypot(ys)
+}
 
-// / image
-// / pub fn generate_randompixel(param image to use) {
-// /     1. generate random number between 0..(max weighted value)
-// /     2. loop through image until hit that random value
-// /     3. get (x,y) of pixel => apply mapping to the OS map
-// /     return mapped x, y
-// / }
-
-// / demand gen -- separate thread to GUI/sim, could precompute the next batch of demand while GUI tick is occurring
-// / 1. run rng pixel gen 1000 times in a tick
-// / 2. push back map points onto the queue
-// / 3. return something to give feedback to sim thread
-// /
-
-// pub enum SelectionStrategy {
-//     Constant(u8),
-//     Random,
-//     Time
-// }
-
-// fn get_image(time: chrono::DateTime<Utc>, images: ImageResources, strat: SelectionStrategy) -> Option<&'static Box<DynamicImage>> {
-//     match strat {
-//         SelectionStrategy::Constant(i) => {
-//             // Choose the one with key i always
-//             match images.image_data.get(&i) {
-//                 Some(bx) => Some(bx),
-//                 None => None
-//             }
-//         },
-//         SelectionStrategy::Random => {
-//             // Choose a random one
-//             let index = rand::thread_rng().gen_range(0..=images.image_data.len());
-//             match images.image_data.values().nth(index) {
-//                 Some(bx) => Some(bx),
-//                 None => None
-//             }
-//         },
-//         SelectionStrategy::Time => {
-//             // Select 0 -> 12 for active hours 0->12
-//             let hour = time.hour();
-//             match hour {
-//                 0..=6 => None,
-//                 7..=19 => None, // Parse the time file
-//                 20..=23 => None,
-//                 _ => None
-//             }
-//         }
-//     }
-// }
-
-// impl DemandGenerator {
-
-//     pub fn new(graph: Arc<Graph>) -> Self {
-//         DemandGenerator {
-//             graph,
-//             image: None,
-//             normalisation_factor: 0,
-
-//             map_left: 0.0,
-//             map_top: 0.0,
-//             map_width: 0.0,
-//             map_height: 0.0,
-
-//             demand_queue: Arc::new(RwLock::new(Default::default()))
-//         }
-//     }
-
-//     pub fn load_imge(&mut self) -> Result<(), Box<dyn Error>> {
-//         let img = image::io::Reader::open("./data/img/test.png")?.decode()?;
-//         let map = img.into_luma8();
-
-//         let total_img_brightness = map.pixels().fold(0_u64, |acc, pix| acc + pix.0[0] as u64);
-//         println!("total brightness {:?}", total_img_brightness);
-//         println!("image {:?}", map);
-//         self.image = Some(map);
-//         self.normalisation_factor = total_img_brightness;
-//         Ok(())
-//     }
-
-//     pub fn idk(&self) {
-//         match self.graph.get_transform().read() {
-//             Ok(transform) => {
-
-//             },
-//             Err(err) => panic!("Couldn't read graph {}", err)
-//         }
-//     }
-
-//     // Finds a random pixel weighted by the brightness
-//     pub fn sample_random_pixel(&mut self) -> (f64, f64) {
-//         let rng = rand::thread_rng().gen_range(0..=self.normalisation_factor+1);
-//         let mut seen_total_weight = 0;
-
-//         let image = self.image.as_ref().unwrap();
-
-//         let (i, _) = image.pixels().enumerate().find(|&(_, pix)| {
-//             seen_total_weight += pix.0[0] as u64;
-//             if seen_total_weight > rng {
-//                 true
-//             } else {
-//                 false
-//             }
-//         }).unwrap();
-
-//         let y = i as u32 / image.width();
-//         let x = i as u32 % image.width();
-
-//         return (x as f64 + rand::thread_rng().gen_range(-0.5..=0.5), y as f64 + rand::thread_rng().gen_range(-0.5..=0.5));
-//     }
-
-//     pub fn do_generate_demand(&mut self) -> Vec<Demand> {
-//         // Returns a list of demand objects generated.
-//         let mut ret = vec![];
-//         let mut rand = rand::thread_rng();
-//         let node_a = self.graph.get_nodelist().keys().nth(rand.gen_range(0..=self.graph.get_nodelist().len()));
-//         let node_b = self.graph.get_nodelist().keys().nth(rand.gen_range(0..=self.graph.get_nodelist().len()));
-
-//         ret.push(Demand(*node_a.unwrap(), *node_b.unwrap(), 0));
-//         ret
-//     }
-// }
-
-// #[derive(Debug)]
-// pub struct Demand(u128, u128, u128); // start, end, latest arrival time
-
-// mod test {
-//     use std::fs;
-
-//     #[test]
-//     pub fn test() {
-//         use super::*;
-//         use std::path::PathBuf;
-//         use crate::Module;
-
-//         let mut odbrs = crate::Main::default();
-
-//         odbrs.init(PathBuf::from(r#"data/config.toml"#), ()).unwrap();
-//         let mut demand = DemandGenerator::new(odbrs.graph.clone());
-
-//         match demand.load_imge() {
-//             Ok(()) => (),
-//          Err(err) => panic!("Couldn't load image {}", err)
-//         };
-
-//         let mut demand_buffer = vec![];
-//         let time = std::time::Instant::now();
-
-//         for _ in 0..997 {
-//             demand_buffer.push(demand.sample_random_pixel());
-//         }
-
-//         println!("Generated in {:?}", time.elapsed());
-//         println!("Demand len {:?}", demand_buffer.len());
-//         println!("{:?}", demand_buffer.get(0..10));
-
-//         match fs::write("./data/dist.csv", demand_buffer.into_iter().map(|pt| format!("{},{}\n", pt.0, pt.1)).collect::<String>()) {
-//             Ok(_) => (),
-//             Err(err) => panic!("couldn't write to file {}", err)
-//         }
-//     }
-
-// }
+fn point64((a, b): (f32, f32)) -> (f64, f64) {
+    (a as f64, b as f64)
+}

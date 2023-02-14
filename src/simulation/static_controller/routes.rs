@@ -11,9 +11,10 @@ use std::{
 };
 
 use crate::{
-    graph::{route_finding, Graph},
-    simulation::dyn_controller::bus::CurrentElement,
+    graph::{route_finding, Graph}
 };
+
+use super::distance;
 
 // Load the GTFS data and create an serialised version for quick loading in the application
 pub fn load_routes() {
@@ -62,7 +63,7 @@ pub fn load_routes() {
                 i += 1;
                 print!("processed trip {:?}\r", i);
                 trip.stop_times.iter().all(|stop| {
-                    valid_stops.contains(&stop.stop.id) && stop.arrival_time.unwrap() < 21600 //86400
+                    valid_stops.contains(&stop.stop.id) && stop.arrival_time.unwrap() < 86400//21600 //86400
                 }) && data.get_route(&trip.route_id).unwrap().route_type == RouteType::Bus
             })
             .map(|(id, trip)| {
@@ -199,7 +200,7 @@ pub fn make_network_trip(trip: &Trip, stop_map: &HashMap<String, u32>) -> Networ
     }
 }
 
-pub fn closest_stop_to_point(point: (f64, f64), network_data: Arc<NetworkData>) -> u32 {
+pub fn closest_stop_to_point(point: (f64, f64), network_data: Arc<NetworkData>) -> (u32, f64) {
     let mut min_distance = f64::MAX;
     let mut closest_stop = None;
 
@@ -211,23 +212,33 @@ pub fn closest_stop_to_point(point: (f64, f64), network_data: Arc<NetworkData>) 
         }
     }
 
-    closest_stop.unwrap().clone()
+    (closest_stop.unwrap().clone(), min_distance)
 }
 
 pub fn get_graph_edge_from_stop(stop: &NetworkStop, graph: Arc<Graph>) -> u128 {
     let mut min_distance = f64::MAX;
     let mut closest_edge = None;
 
+    let stop_point = stop.position();
+
     for (id, edge) in graph.get_edgelist() {
+        // println!("GGEFS: Examining {:?}", id);
         let edge_u = edge.points.first().unwrap();
         let edge_v = edge.points.last().unwrap();
+        // println!("GGEFS: Edge u: {:?}\t v: {:?}", edge_u, edge_v);
 
-        let u_v = (edge_v.0 - edge_u.0, edge_v.1 - edge_u.1);
-        let u_p = (stop.easting - edge_u.0, stop.northing - edge_u.1);
+        // let u_v = (edge_v.0 - edge_u.0, edge_v.1 - edge_u.1);
+        // let u_p = (stop.easting - edge_u.0, stop.northing - edge_u.1);
 
-        let proj = (u_v.0 * u_p.0 + u_v.1 * u_p.1) / (u_v.0.powi(2) + u_v.1.powi(2));
-        let u_v_len2 = u_v.0.powi(2) + u_v.1.powi(2);
-        let distance = proj / u_v_len2;
+        // println!("GGEFS: u_v: {:?}\t u_p: {:?}", u_v, u_p);
+
+        // let proj = (u_v.0 * u_p.0 + u_v.1 * u_p.1) / (u_v.0.powi(2) + u_v.1.powi(2));
+        // let u_v_len2 = u_v.0.powi(2) + u_v.1.powi(2);
+        // let distance = proj / u_v_len2;
+
+        // println!("GGEFS: proj: {:?}\t u_v_len2: {:?}\t distance: {:?}", proj, u_v_len2, distance);
+
+        let distance = dist_point_linesegment_2([*edge_u, *edge_v], stop_point);
 
         if distance < min_distance {
             min_distance = distance;
@@ -238,6 +249,26 @@ pub fn get_graph_edge_from_stop(stop: &NetworkStop, graph: Arc<Graph>) -> u128 {
     *closest_edge.unwrap()
 }
 
+// Taken from Paul Bourke
+fn dist_point_linesegment_2(segment: [(f64, f64); 2], point: (f64, f64)) -> f64 {
+    let p1@(p1_x, p1_y) = segment[0];
+    let p2@(p2_x, p2_y) = segment[1];
+    let (p3_x, p3_y) = point;
+
+    let u = ((p3_x - p1_x) * (p2_x - p1_x) + (p3_y - p1_y) * (p2_y - p1_y))
+        / ((p2_x - p1_x).powi(2) + (p2_y - p1_y).powi(2));
+
+    let (proj_x, proj_y) = if u < 0.0 {
+        p1
+    } else if u > 1.0 {
+        p2
+    } else {
+        (p1_x + u * (p2_x - p1_x), p1_y + u * (p2_y - p1_y))
+    };
+
+    (p3_x - proj_x).powi(2) + (p3_y - proj_y).powi(2)
+}
+
 // Converts a trip to a vector of nodes, returns (vector of nodes (path), vector of edges (stop edges))
 pub fn convert_trip_to_graph_path(
     trip: u32,
@@ -246,24 +277,66 @@ pub fn convert_trip_to_graph_path(
 ) -> (Vec<u128>, Vec<u128>) {
     // list of the stop edges which need to be joined by edges inbetween
     let trip = network_data.trips.get(&trip).expect("Trip not found");
-    let mut path = Vec::new();
+    let mut edges = Vec::new();
 
     for stop in trip.stops.iter() {
         let stop = network_data.stops.get(stop).unwrap();
         let edge = get_graph_edge_from_stop(stop, graph.clone());
-        path.push(edge);
+        edges.push(edge);
     }
 
     let mut route = Vec::new();
 
-    for i in 0..path.len() - 1 {
-        let edge = path[i];
-        let next_edge = path[i + 1];
-        let partial_route = route_finding::best_first_edge_route(edge, next_edge, graph.clone());
-        route.extend(partial_route);
+    // for i in 0..edges.len() - 1 {
+    //     let edge = edges[i];
+    //     let next_edge = edges[i + 1];
+    //     let partial_route = route_finding::best_first_edge_route(edge, next_edge, graph.clone());
+    //     route.extend(partial_route);
+    // }
+    for i in 0..edges.len() {
+        let edge_id = edges[i];
+        let edge_data = graph.get_edgelist().get(&edge_id).expect("Edge referenced in trip does not exist");
+
+        let start_node_id = edge_data.start_id;
+        let start_node_data = graph.get_nodelist().get(&start_node_id).expect("Node referenced in trip does not exist");
+
+        let end_node_id = edge_data.end_id;
+        let end_node_data = graph.get_nodelist().get(&end_node_id).expect("Node referenced in trip does not exist");
+
+        match route.last() {
+            Some(prev_node) => {
+                let prev_node_data = graph.get_nodelist().get(prev_node).expect("Node referenced in trip does not exist");
+                
+                let start_distance = distance(start_node_data.point, prev_node_data.point);
+                let end_distance = distance(end_node_data.point, prev_node_data.point);
+                
+                let target_node = if start_distance <= end_distance {
+                    start_node_id
+                } else {
+                    end_node_id
+                };
+
+                let subroute = route_finding::find_route(&graph, *prev_node, target_node);
+                route.extend(subroute.into_iter().rev()); //TODO: might need to skip 1 or add destination on at end
+            },
+            None if i == 0 => {
+                let next_stop = trip.stops[i + 1];
+                let next_stop_position = network_data.stops.get(&next_stop).expect("Stop referenced in trip does not exist").position();
+                               
+                let start_distance = distance(start_node_data.point, next_stop_position);
+                let end_distance = distance(end_node_data.point, next_stop_position);
+                
+                if start_distance <= end_distance {
+                    route.push(edge_data.start_id);
+                } else {
+                    route.push(edge_data.end_id);
+                }
+            },
+            None => unreachable!("The first edge in the trip should be the first node we add in the route")
+        }
     }
 
-    (route, path)
+    (route, edges)
 }
 
 pub fn load_saved_network_data() -> Option<NetworkData> {
@@ -277,6 +350,19 @@ pub fn timeint_to_time(time: u32) -> chrono::NaiveTime {
 
     NaiveTime::from_num_seconds_from_midnight(time, 0)
     // chrono::NaiveTime::from_hms(hours as u32, min as u32, sec as u32)
+}
+
+pub fn stop_neighbourhood_pos(pos: (f64, f64), threshold: f64, network_data: Arc<NetworkData>) -> Vec<u32> {
+    network_data.stops.iter().filter(|(_, stop)| {
+        let stop_pos = stop.position();
+        distance(pos, stop_pos) <= threshold
+    }).map(|(id, _)| *id).collect()
+}
+
+pub fn stop_neighbourhood(stop: u32, threshold: f64, network_data: Arc<NetworkData>) -> Vec<u32> {
+    let stop = network_data.stops.get(&stop).expect("Stop not found");
+    let pos = stop.position();
+    stop_neighbourhood_pos(pos, threshold, network_data)
 }
 
 #[cfg(test)]

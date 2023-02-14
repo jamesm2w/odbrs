@@ -12,7 +12,7 @@ pub fn bind_adjacencylist(
     let (node_map, edge_map) = (list.node_map, list.edge_map);
 
     let mut listprime = AdjacencyList {
-        node_map: node_map.into_iter().filter(|(_, node)| point_within_bounds(node.point, left, right, top, bottom)).collect(),
+        node_map: node_map.iter().filter(|(_, node)| point_within_bounds(node.point, left, right, top, bottom)).map(|(k, v)| (*k, v.to_owned())).collect(),
         edge_map: edge_map
             .into_iter()
             .filter(|(_, edge)| 
@@ -32,6 +32,15 @@ pub fn bind_adjacencylist(
             .entry(edge.end_id)
             .and_modify(|entry| entry.push(*id))
             .or_insert(vec![*id]);
+        
+        // Add the nodes to the node map if they are not already there (i.e. technically outside bounds, but an edge ends at one of them)
+        if !listprime.node_map.contains_key(&edge.start_id) {
+            listprime.node_map.insert(edge.start_id, node_map.get(&edge.start_id).expect("Edge Start should be in original map").clone());
+        }
+
+        if !listprime.node_map.contains_key(&edge.end_id) {
+            listprime.node_map.insert(edge.end_id, node_map.get(&edge.end_id).expect("Edge End should be in original map").clone());
+        }
     }
 
     listprime

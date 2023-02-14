@@ -1,8 +1,8 @@
-use std::{collections::VecDeque, sync::Arc};
+use std::{collections::VecDeque, sync::{Arc, mpsc::Sender}};
 
 use chrono::{DateTime, Utc};
 
-use crate::{graph::{route_finding, transform::convert_point, Graph}, simulation::dyn_controller::bus::Status};
+use crate::{graph::{route_finding, transform::convert_point, Graph}, simulation::dyn_controller::bus::Status, analytics::AnalyticsPackage};
 
 use self::bus::{Bus, Passenger};
 
@@ -17,14 +17,18 @@ pub mod waypoints;
 #[derive(Default)]
 pub struct DynamicController {
     id: u8,
+    pid: u32, 
     buses: Vec<Bus>,
     demands: VecDeque<Passenger>,
+    analytics: Option<Sender<AnalyticsPackage>>
 }
 
 impl DynamicController {
-    // pub fn new() -> Self {
-    //     DynamicController { id: 0, buses: vec![], demands: VecDeque::new() }
-    // }
+
+    pub fn set_analytics(&mut self, tx: Option<Sender<AnalyticsPackage>>) {
+        println!("[ANALYTICS] Set analytics channel to {:?}", tx.is_some());
+        self.analytics = tx;
+    }
 
     // Construct a new/partial solution -- try assignments and see which minimises
     pub fn constructive(&mut self, graph: Arc<Graph>) {
@@ -54,25 +58,27 @@ impl DynamicController {
         println!("[LNS] Demand size: {}", self.demands.len());
         
         while !self.demands.is_empty() && self.buses.iter().any(|b| b.can_assign_more()) {
-            println!("[LNS] demand size: {}, can buses assign? {:?}", self.demands.len(), self.buses.iter().any(|b| b.can_assign_more()));
+            // println!("[LNS] demand size: {}, can buses assign? {:?}", self.demands.len(), self.buses.iter().any(|b| b.can_assign_more()));
             
+            // TODO: basically reorder these loops to avoid this n2?
+            // TODO: move min_assignment to each bus. Find the min demand for each bus and add it 
             let mut min_assignment: Option<(f64, usize, &Passenger)> = None;
             
             for i in 0..self.buses.len() {
                 let bus = &mut self.buses[i];
-                println!("[LNS]\tAnalysing with bus: {}", bus.agent_id);
+                // println!("[LNS]\tAnalysing with bus: {}", bus.agent_id);
 
                 for demand in self.demands.iter() {
-                    println!("[LNS]\t\t Testing assignment to bus: {:?}; demand {:?}", bus.agent_id, demand.dest_pos);
+                    // println!("[LNS]\t\t Testing assignment to bus: {:?}; demand {:?}", bus.agent_id, demand.dest_pos);
                     // use BFS with heuristic being straigh line distance
                     // try bus route with this demand
                     // if distance < max distance so far: save this as an insertion to use
 
                     let route_len = bus.what_if_bus_had_passenger(demand);
 
-                    println!("[LNS]\t\t Resultant Route length: {}", route_len);
+                    // println!("[LNS]\t\t Resultant Route length: {}", route_len);
                     if route_len < min_assignment.map(|(len, _, _)| len).unwrap_or(f64::MAX) {
-                        println!("[LNS]\t\t New Minimum Found");
+                        // println!("[LNS]\t\t New Minimum Found");
                         // save this as an insertion to use
                         min_assignment = Some((route_len, i, demand));
                     }
@@ -81,7 +87,7 @@ impl DynamicController {
 
             if let Some((_, bus_i, demand)) = min_assignment {
                 let bus = &mut self.buses[bus_i];
-                println!("[LNS] Performing constructive insertion for bus: {}; demand {:?}", bus.agent_id, demand.dest_pos);
+                // println!("[LNS] Performing constructive insertion for bus: {}; demand {:?}", bus.agent_id, demand.dest_pos);
                 let index = self.demands.iter().position(|d| d == demand).unwrap();
                 let passenger = self.demands.remove(index).unwrap();
                 bus.constructive(passenger);
@@ -145,7 +151,7 @@ impl Controller for DynamicController {
     fn spawn_agent(&mut self, graph: Arc<crate::graph::Graph>) -> Option<&Self::Agent> {
         println!("Spawning new bus");
         self.id += 1;
-        let bus = Bus::new(graph.clone(), 20, self.id);
+        let bus = Bus::new(graph.clone(), 20, self.id, self.analytics.clone());
         self.buses.push(bus);
         Some(self.buses.last().expect("Couldn't create new agent"))
     }
@@ -157,16 +163,19 @@ impl Controller for DynamicController {
         time: DateTime<Utc>,
     ) {
         println!("Updating agents");
+        
+        self.demands.iter_mut().for_each(|d| d.update(&self.analytics));
+
         self.buses.iter_mut().for_each(|b| b.move_self());
 
-        // if self.buses[0].assignment.len() == 0 {
-        //     // TODO: just for testing only do the gen once
-        //     println!("[LNS] Getting demands");
-
-        let demand_queue = demand.generate_amount(2, &time);
-        let mut demand_queue = demand_queue.into_iter().map(|d| demand_to_passenger(d, graph.clone())).collect();
+        // TODO: just for testing only do gen at 1/50 scale
+        let demand_queue = demand.generate_scaled_amount(1.0/50.0, &time, Ok(graph.clone()));
+        let mut demand_queue = demand_queue.into_iter().map(|d| {
+            let passenger = demand_to_passenger(d, graph.clone(), self.pid);
+            self.pid += 1;
+            passenger
+        }).collect();
         self.demands.append(&mut demand_queue);
-        // }
 
         println!("[LNS] Running LNS");
         self.large_neighbourhood_search(graph);
@@ -174,12 +183,13 @@ impl Controller for DynamicController {
 }
 
 // convert generated demand object into a passenger object
-pub fn demand_to_passenger(demand: Demand, graph: Arc<Graph>) -> Passenger {
+pub fn demand_to_passenger(demand: Demand, graph: Arc<Graph>, id: u32) -> Passenger {
     let origin = route_finding::closest_node(convert_point(demand.0), &graph);
     let dest = route_finding::closest_node(convert_point(demand.1), &graph);
     let time = demand.2;
     // Passenger::new(origin, dest, time)
     Passenger {
+        id: id + 1,
         source_node: origin,
         source_pos: (demand.0.0 as f64, demand.0.1 as f64),
         dest_node: dest,

@@ -1,12 +1,14 @@
-use std::{collections::{VecDeque, HashMap}, sync::Arc};
+use std::{collections::{VecDeque, HashMap}, sync::{Arc, mpsc::Sender}};
 
 use chrono::{DateTime, Utc};
 use eframe::epaint::{Shape, Stroke, Color32, pos2};
 use rand::Rng;
 
-use crate::{graph::{Graph, route_finding}, simulation::{Agent, default_display}};
+use crate::{graph::{Graph, route_finding}, simulation::{Agent, default_display}, analytics::{AnalyticsPackage, PassengerAnalyticsEvent, VehicleAnalyticsEvent}};
 
 use super::waypoints::{bus_waypoints, create_ordering, Waypoint, bus_waypoints_with_passenger};
+
+const HUMAN_WALKING_SPEED: f64 = 1.4; // m/s
 
 pub enum Action {
     Wait, // Stay at this node for this tick
@@ -47,12 +49,76 @@ impl Default for Status {
 /// Represents the passenger of a generated demand which is on the bus
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct Passenger {
+    pub id: u32,
     pub source_pos: (f64, f64),
     pub source_node: u128,
     pub dest_pos: (f64, f64),
     pub dest_node: u128,
     pub timeframe: DateTime<Utc>,
     pub status: Status
+}
+
+pub fn send_analytics(analytics: &Option<Sender<AnalyticsPackage>>, event: AnalyticsPackage) {
+    if let Some(tx) = analytics.as_ref() {
+        // println!("[ANALYTICS] Sending analytics event!");
+        if let Err(err) = tx.send(event) {
+            panic!("[ANALYTICS] Unable to send analytics: {:?}", err);
+        } else {
+            // println!("[ANALYTICS] Sent analytics event!");
+        }
+    } else {
+        // println!("[ANALYTICS] No analytics channel found!");
+    }
+}
+
+impl Passenger {
+    pub fn update(&mut self, analytics: &Option<Sender<AnalyticsPackage>>) {
+        println!("{:?} Passenger update", self.id);
+        match self.status {
+            Status::Generated | Status::Expired => {}, // Passenger state necessitates nothing happening
+            Status::TravelStart(ticks) => { // start by walking `ticks` to the start node
+                send_analytics(analytics, AnalyticsPackage::PassengerEvent(PassengerAnalyticsEvent::StartWalkingTick { id: self.id }));
+                if ticks == 0 {
+                    self.status = Status::Waiting(0);
+                } else {
+                    self.status = Status::TravelStart(ticks - 1);
+                }
+            },
+            Status::Waiting(ticks) => {
+                send_analytics(analytics, AnalyticsPackage::PassengerEvent(PassengerAnalyticsEvent::WaitingTick { id: self.id, waiting_pos: self.source_pos }));
+                self.status = Status::Waiting(ticks + 1);
+            },
+            Status::OnBus(_) => {
+                send_analytics(analytics, AnalyticsPackage::PassengerEvent(PassengerAnalyticsEvent::InTransitTick { id: self.id }));
+            },
+            Status::TavelDest(ticks) => { // after reaching destination node, walking for `ticks` to end
+                send_analytics(analytics, AnalyticsPackage::PassengerEvent(PassengerAnalyticsEvent::EndWalkingTick { id: self.id }));
+                if ticks == 0 {
+                    self.status = Status::Expired;
+                } else {
+                    self.status = Status::TavelDest(ticks - 1);
+                }
+            }
+        }
+    }
+
+    pub fn set_on_bus(&mut self) {
+        self.status = Status::OnBus(Utc::now());
+    }
+
+    pub fn set_travel_start(&mut self, graph: Arc<Graph>) {
+        let dist = graph.get_nodelist().get(&self.source_node).expect("Node not found");
+        let dist = distance(dist.point, self.source_pos);
+        let ticks = (dist / HUMAN_WALKING_SPEED) as u8;
+        self.status = Status::TravelStart(ticks);
+    }
+
+    pub fn set_travel_end(&mut self, graph: Arc<Graph>) {
+        let dist = graph.get_nodelist().get(&self.dest_node).expect("Node not found");
+        let dist = distance(dist.point, self.dest_pos);
+        let ticks = (dist / HUMAN_WALKING_SPEED) as u8;
+        self.status = Status::TavelDest(ticks);
+    }
 }
 
 #[derive(Default)]
@@ -67,12 +133,16 @@ pub struct Bus {
     pub passengers: Vec<Passenger>, // List of passengers on the bus (current assignment/solution)
     pub assignment: HashMap<u128, Vec<Passenger>>, // Future passengers to be added to the bus (future assignment/solution)
     
+    pub delivered_passengers: Vec<Passenger>, // List of passengers delivered to their destination
+
     pub path_waypoints: VecDeque<Waypoint>, // List of important nodes which should be in full path // TODO: look into a hashset or some ordering of waypoints
     pub path_full: VecDeque<u128>, // List of nodes to visit to complete the assignment
 
     pub current_pos: (f64, f64), // Current position of the agent
     pub current_el: CurrentElement, // Current edge the agent is on
     pub next_node: u128, // Next node the agent is travelling to; the "locking node"
+
+    pub analytics: Option<Sender<AnalyticsPackage>>, // Sender to the analytics thread
 }
 
 const STROKES: [Stroke; 2] = [
@@ -112,7 +182,10 @@ impl Agent for Bus {
         }).collect::<Vec<_>>();
 
         let path = Shape::line(self.path_full.iter().map(|node| {
-            let node_data = self.graph.get_nodelist().get(node).expect("Node not found");
+            if self.graph.get_nodelist().get(node).is_none() {
+                println!("Node not found: {}", node);
+            }
+            let node_data = self.graph.get_nodelist().get(node).expect("Node not found"); // TODO: panic here
             pos2(node_data.point.0 as _, node_data.point.1 as _)
         }).collect(), STROKES[(self.agent_id % 2) as usize]); //Stroke::new(2.0, Color32::LIGHT_BLUE)
 
@@ -141,7 +214,11 @@ impl Bus {
                 while i < passengers.len() {
                     if self.rem_capacity > 0 {
                         let mut passenger = passengers.remove(i);
-                        passenger.status = Status::OnBus(Utc::now()); // Passenger has been picked up by the bus
+                        // Passenger has been picked up by the bus
+                        passenger.set_on_bus();
+                        
+                        send_analytics(&self.analytics, AnalyticsPackage::VehicleEvent(VehicleAnalyticsEvent::PassengerPickup { id: self.agent_id as u32, passenger_id: passenger.id }));
+                        
                         self.passengers.push(passenger);
                         self.rem_capacity -= 1;
                     } else {
@@ -163,15 +240,28 @@ impl Bus {
         // loop passengers on bus and remove if they have reached their destination
         for passenger in self.passengers.iter_mut() {
             if passenger.dest_node == node {
-                // TODO: add count to this
-                passenger.status = Status::TavelDest(0); // Passenger has now finished bus journey and should move towards their destination 
+                // Passenger has now finished bus journey and should move towards their destination 
+                send_analytics(&self.analytics, AnalyticsPackage::VehicleEvent(VehicleAnalyticsEvent::PassengerDropoff { id: self.agent_id as u32, passenger_id: passenger.id }));
                 
+                passenger.set_travel_end(self.graph.clone());
                 self.rem_capacity += 1;
             }
         }
-        // TODO: should really not just delete this, move them out & clean up for statistics, etc.
-        self.passengers.retain(|passenger| passenger.dest_node != node);
-
+        // should really not just delete this, move them out & clean up for statistics, etc.
+        // self.passengers.retain(|passenger| passenger.dest_node != node);
+        let mut getting_off = VecDeque::new();
+        let mut i = 0;
+        while i < self.passengers.len() {
+            let passenger = &self.passengers[i];
+            if passenger.dest_node == node {
+                let passenger = self.passengers.remove(i);
+                getting_off.push_back(passenger);
+            } else {
+                i += 1;
+            }
+        }
+        self.delivered_passengers.extend(getting_off.into_iter());
+        
         // TODO: check if there are timeline constraints which means the bus needs to wait at this node
         Action::Continue
     }
@@ -181,7 +271,8 @@ impl Bus {
     }
 
     // TODO: abstract out random initialisation to another function?
-    pub fn new(graph: Arc<Graph>, max_capacity: u8, id: u8) -> Self {
+    pub fn new(graph: Arc<Graph>, max_capacity: u8, id: u8, analytics: Option<Sender<AnalyticsPackage>>) -> Self {
+
         let random_index = rand::thread_rng().gen_range(0..=graph.get_nodelist().len() - 1);
         let random_node = graph.get_nodelist().keys().nth(random_index).unwrap();
         let adjacency = graph.get_adjacency().get(random_node).unwrap();
@@ -199,6 +290,7 @@ impl Bus {
             current_el: CurrentElement::Edge { edge: *edge, prev_node: *random_node },
             current_pos: agent_pos,
             next_node: locking_node,
+            analytics,
             ..Default::default()
         }
     }
@@ -230,7 +322,8 @@ impl Bus {
 
     // Adds the passenger to the assignment by placing them in their source node waiting list
     pub fn add_passenger_to_assignment(&mut self, mut passenger: Passenger) {
-        passenger.status = Status::TravelStart(0); // passenger should now be making its way to the bus stop! to get picked up
+        // passenger should now be making its way to the bus stop! to get picked up
+        passenger.set_travel_start(self.graph.clone());
         self.assignment.entry(passenger.source_node).or_insert_with(|| Vec::new()).push(passenger);
     }
 
@@ -280,7 +373,7 @@ impl Bus {
             let mut to_remove = vec![];
             
             for passenger in passengers.iter() {
-                if !self.passengers.contains(passenger) {
+                if !self.passengers.contains(passenger) { 
                     if rng.gen_bool(0.5) {
                         to_remove.push(passenger.clone());
                     }
@@ -292,6 +385,7 @@ impl Bus {
                 removed.push(passenger);
             }
         }
+        println!("Destructive removed {:?}", removed.len());
         removed
     }
 
@@ -315,9 +409,20 @@ impl Bus {
                 }
             }
         }
-        path.pop_front(); // Remove the first node as it is the current node
+        // path.pop_front(); // Remove the first node as it is the current node
         // println!("Full path: {:?}", path);
         self.path_full = path;
+    }
+
+    pub fn update_passengers(&mut self) {
+        // update passengers on the bus
+        self.passengers.iter_mut().for_each(|p| p.update(&self.analytics));
+        
+        // update passengers which are assigned / waiting for this bus 
+        self.assignment.iter_mut().for_each(|(_, passengers)| passengers.iter_mut().for_each(|p| p.update(&self.analytics)));
+    
+        // update passengers we've "finished" with
+        self.delivered_passengers.iter_mut().for_each(|p| p.update(&self.analytics)); 
     }
 
     /// for every stop s in route b
@@ -339,8 +444,12 @@ impl Bus {
     /// return the lockpoint (index of the route)
 
     // Actual movement function which moves the bus one step along the computed path
-    // TODO: Maybe run the "handle arrival at node" function somewhere in here...
+    // TODO: Maybe run the "handle arrival at node" function somewhere in here..
+    // TODO: handle whether the bus is at the final destination and can let the passengers off??
     pub fn move_self(&mut self) {
+
+        self.update_passengers();
+
         // No need to move agent if no path to follow
         if self.path_full.len() == 0 {
             return; // No path to follow
@@ -361,10 +470,16 @@ impl Bus {
                 }, 
                 CurrentElement::Node(node) => {
                     let next_node = self.next_node;
-                    *self.graph.get_adjacency()[&node].iter().find(|edge| {
+                    // if next_node == node {
+                    //     return; // We are at the final destination
+                    // }
+                    match self.graph.get_adjacency()[&node].iter().find(|edge| {
                         let edge_data = &self.graph.get_edgelist()[edge];
                         edge_data.start_id == next_node || edge_data.end_id == next_node
-                    }).unwrap()
+                    }) {
+                        Some(&edge) => edge,
+                        None => return // We are at the final destination, or basically no way to get where we're going
+                    }
                 }
             };
             let moving_edge_data = &self.graph.get_edgelist()[&moving_edge_id];
@@ -389,6 +504,7 @@ impl Bus {
                     // println!("On line segment {}/{}", i, line.len());
                     let distance_remaining = distance(self.current_pos, segment_end);
                     // println!("Distance remaining: {}", distance_remaining);
+                    
                     if move_distance > distance_remaining { // if move distance is > distance to end of line segment, move to end of line segment. Will then consider the next segment.
                         self.current_pos = segment_end;
                         move_distance -= distance_remaining;
@@ -396,6 +512,7 @@ impl Bus {
                     } else {
                         let dir = normalise((segment_end.0 - segment_start.0, segment_end.1 - segment_start.1));
                         self.current_pos = (self.current_pos.0 + dir.0 * move_distance, self.current_pos.1 + dir.1 * move_distance);
+                        send_analytics(&self.analytics, AnalyticsPackage::VehicleEvent(VehicleAnalyticsEvent::MovementTick { id: self.agent_id as u32, pos: self.current_pos }));
                         return;
                     }
                 } else {
@@ -412,20 +529,23 @@ impl Bus {
             if has_moved && move_distance > 0.0 {
                 // We have moved the full distance to move along the current edge and are now at "self.next_node"
                 // Move to the next edge
+ 
                 let current_node = self.next_node; //self.path_full.pop_front().unwrap(); // Also should be the current self.next_node before we update it
+                // TODO: try to fix the destination issue by somehow not popping here, and popping in the handle arrival functiono or something
                 self.next_node = match self.path_full.pop_front() {
                     Some(next_node) => {
                         // Find edge which connects current node to the next node in the path
                         let edge_id = self.graph.get_adjacency()[&current_node].iter().find(|e| {
                             let edge = &self.graph.get_edgelist()[e];
                             edge.start_id == next_node || edge.end_id == next_node
-                        }).unwrap(); // TODO: fix potential panic here?
+                        }).unwrap();
 
                         self.current_el = CurrentElement::Edge { edge: *edge_id, prev_node: current_node };
                         next_node
                     },
                     None => {
                         // We have reached the end of the path
+
                         self.current_el = CurrentElement::Node(current_node);
                         return;
                     }

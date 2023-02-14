@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::VecDeque, rc::Rc, sync::Arc};
+use std::{cell::RefCell, collections::VecDeque, rc::Rc, sync::{Arc, mpsc::Sender}};
 
 use chrono::Utc;
 use eframe::epaint::{Shape, pos2, Stroke, Color32};
@@ -6,16 +6,28 @@ use eframe::epaint::{Shape, pos2, Stroke, Color32};
 use crate::{
     graph::Graph,
     simulation::{
-        default_display,
-        dyn_controller::bus::{Bus, CurrentElement},
+        dyn_controller::bus::CurrentElement,
         Agent,
-    },
+    }, analytics::{AnalyticsPackage, PassengerAnalyticsEvent, VehicleAnalyticsEvent},
 };
 
 use super::{
     routes::{self, get_graph_edge_from_stop, NetworkData},
     Control,
 };
+
+pub fn send_analytics(analytics: &Option<Sender<AnalyticsPackage>>, event: AnalyticsPackage) {
+    if let Some(tx) = analytics.as_ref() {
+        // println!("[ANALYTICS] Sending analytics event!");
+        if let Err(err) = tx.send(event) {
+            panic!("[ANALYTICS] Unable to send analytics: {:?}", err);
+        } else {
+            // println!("[ANALYTICS] Sent analytics event!");
+        }
+    } else {
+        // println!("[ANALYTICS] No analytics channel found!");
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PassengerStatus {
@@ -32,44 +44,63 @@ impl Default for PassengerStatus {
 }
 
 /// Represents the passenger of a generated demand which is on the bus
-#[derive(Default, Debug, Clone, PartialEq)]
+#[derive(Default, Debug, Clone)]
 pub struct BusPassenger {
+    pub id: u32,
     pub source_pos: (f64, f64),
     pub source_stop: u32,
 
     pub dest_pos: (f64, f64),
     pub dest_stop: u32,
 
-    pub instructions: Vec<Control>,
+    pub instructions: VecDeque<Control>,
 
     pub status: PassengerStatus,
+    pub analytics: Option<Sender<AnalyticsPackage>>,
 }
 
 impl BusPassenger {
     // get stop to get off at, or stop which will be getting on at (waiting)
     pub fn get_next_stop(&self) -> u32 {
+        println!("passenger instructions {:?} status {:?}", self.instructions, self.status);
         match self.instructions[0] {
-            Control::TakeBus(get_on, get_off, trip_id) => match self.status {
-                PassengerStatus::Waiting => get_on,
-                PassengerStatus::OnBus => get_off,
+            Control::TakeBus{source, destination, trip_id} => match self.status {
+                PassengerStatus::Waiting => source,
+                PassengerStatus::OnBus => destination,
                 _ => panic!("Invalid passenger status"),
             },
-            Control::WalkToStop(_, walk_to) => walk_to,
+            Control::WalkToStop{destination_stop, source_stop} => destination_stop,
         }
     }
 
     pub fn get_next_trip_id(&self) -> u32 {
         match self.instructions[0] {
-            Control::TakeBus(_, _, trip_id) => trip_id,
+            Control::TakeBus{ trip_id, .. } => trip_id,
             _ => panic!("Invalid passenger status"),
         }
     }
 
     pub fn get_off_bus(&mut self) {
-        self.instructions.remove(0);
+        self.instructions.pop_front();
+        self.status = PassengerStatus::Finished;
     }
 
-    pub fn get_on_bus(&mut self) {}
+    pub fn get_on_bus(&mut self) {
+        // self.instructions.pop_front(); // Maybe don't need to do this since on bus you should have intruction of taking bus
+        self.status = PassengerStatus::OnBus;
+    }
+
+    pub fn update(&mut self) {
+        match self.status {
+            PassengerStatus::Waiting => {
+                send_analytics(&self.analytics, AnalyticsPackage::PassengerEvent(PassengerAnalyticsEvent::WaitingTick { id: self.id, waiting_pos: self.source_pos }))
+            },
+            PassengerStatus::OnBus => {
+                send_analytics(&self.analytics, AnalyticsPackage::PassengerEvent(PassengerAnalyticsEvent::InTransitTick { id: self.id }))
+            },
+            PassengerStatus::Generated | PassengerStatus::Finished => {},
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -87,24 +118,27 @@ impl Default for BusStatus {
 type StopAccessFunction = Box<dyn Fn(u32, u32) -> Vec<Rc<RefCell<BusPassenger>>>>;
 
 pub struct StaticAgent {
-    position: (f64, f64),
-    trip_id: u32,
-    status: BusStatus,
+    pub position: (f64, f64),
+    pub trip_id: u32,
+    pub status: BusStatus,
 
     // Positioning and movement information
-    current_element: crate::simulation::dyn_controller::bus::CurrentElement,
-    next_node: u128,
-    remaining_route: VecDeque<u128>, // TODO: build this route of graph nodes from network data
-    trip_route: Vec<u128>,
+    pub current_element: crate::simulation::dyn_controller::bus::CurrentElement,
+    pub next_node: u128,
+    pub remaining_route: VecDeque<u128>, // TODO: build this route of graph nodes from network data
+    pub trip_route: Vec<u128>,
 
-    trip_stop_edges: Vec<(u128, f64)>,
+    pub trip_stop_edges: Vec<(u128, f64)>,
 
     // Passengers
-    passengers: Vec<BusPassenger>, // list of passengers on the bus right now
+    pub passengers: Vec<BusPassenger>, // list of passengers on the bus right now
 
     // Simulation information
-    graph: Arc<Graph>,
-    network_data: Arc<NetworkData>,
+    pub graph: Arc<Graph>,
+    pub network_data: Arc<NetworkData>,
+
+    // Analytics
+    pub analytics: Option<Sender<AnalyticsPackage>>
 }
 
 impl Agent for StaticAgent {
@@ -147,10 +181,12 @@ impl Agent for StaticAgent {
                     let stop_data = self.network_data.stops.get(stop).unwrap();
                     pos2(stop_data.position().0 as _, stop_data.position().1 as _)
                 }).collect::<Vec<_>>(), Stroke::new(1.0, Color32::GREEN)),
+                
                 Shape::line(self.remaining_route.iter().map(|node| {
                     let node_data = self.graph.get_nodelist().get(node).unwrap();
                     pos2(node_data.point.0 as _, node_data.point.1 as _)
-                }).collect::<Vec<_>>(), Stroke::new(0.5, Color32::DARK_GREEN)),
+                }).collect::<Vec<_>>(), Stroke::new(0.5, Color32::LIGHT_YELLOW))
+                ,
                 Shape::Vec( self.trip_stop_edges.iter().map(|edge| {
                     let edge_data = self.graph.get_edgelist().get(&edge.0).expect("Edge not found");
 
@@ -181,9 +217,12 @@ impl Agent for StaticAgent {
 }
 
 impl StaticAgent {
-    pub fn new(trip_id: u32, graph: Arc<Graph>, network_data: Arc<NetworkData>) -> Self {
+    pub fn new(trip_id: u32, graph: Arc<Graph>, network_data: Arc<NetworkData>, analytics: Option<Sender<AnalyticsPackage>>) -> Self {
         let (trip_route, trip_stop_edges) =
             routes::convert_trip_to_graph_path(trip_id, graph.clone(), network_data.clone());
+
+        // println!("{}\t{:?}\t{:?}", trip_id, trip_route, trip_stop_edges);
+        // println!("\t{:?}", network_data.trips.get(&trip_id).unwrap().stops);
 
         let route_beginning_node = *trip_route.first().unwrap();
         let route_beginning_edge = *trip_stop_edges.first().unwrap();
@@ -257,6 +296,7 @@ impl StaticAgent {
             position: route_beginning_position.clone(),
             status: BusStatus::Unactive,
             passengers: Vec::new(),
+            analytics
         }
     }
 
@@ -279,17 +319,25 @@ impl StaticAgent {
             .unwrap()
             .0;
         if tick.time() < start_time {
+            println!("agent {} is not active", self.trip_id);
             self.status = BusStatus::Unactive;
             return;
         } else {
+            println!("agent {} is active", self.trip_id);
             self.status = BusStatus::Active;
         }
         // when time tick is in trip => bus is active and moves along the trip route
         // trying to stick to timings as much as possible
 
+        self.passengers.iter_mut().for_each(|passenger| {
+            passenger.update();
+        });
+
         // TODO: move code
         move_agent(self, tick, |trip_id, stop_id, agent| {
-            // TODO: stop checking code
+            // TODO: stop checking codeclaer
+            println!("=== ### agent {} is at stop {} ### ===", trip_id, stop_id);
+
             let mut passengers_to_drop = Vec::new();
             let mut i = 0;
             while i < agent.passengers.len() {
@@ -308,10 +356,17 @@ impl StaticAgent {
             agent
                 .passengers
                 .extend(passengers_to_pick_up.into_iter().map(|mut p| {
+                    send_analytics(&agent.analytics, AnalyticsPackage::VehicleEvent(VehicleAnalyticsEvent::PassengerPickup { id: agent.trip_id, passenger_id: p.id }));
                     p.get_on_bus();
                     p
                 }));
         });
+    }
+
+    pub fn destroy_self(&mut self) {
+        // destroy the bus and drop off all remaining passengers at the last stop
+        // this will then remove the bus from the simulation, etc
+        self.status = BusStatus::Unactive;
     }
 }
 
@@ -322,12 +377,14 @@ pub fn move_agent(
 ) {
     // No need to move agent if no path to follow
     if agent.remaining_route.is_empty() {
+        // println!("{} Agent has no path", agent.trip_id);
+        agent.destroy_self();
         return; // No path to follow
     }
 
-    println!("Move self");
-    println!("Current element: {:?}", agent.current_element);
-    println!("Next node: {:?}", agent.next_node);
+    println!("{} Move self", agent.trip_id);
+    println!("{} Current element: {:?}", agent.trip_id, agent.current_element);
+    println!("{} Next node: {:?}", agent.trip_id, agent.next_node);
     // println!("Path: {:?}", self.path_full);
 
     let mut move_distance = 804.672; //10.0; 804.672 = 13.4112 * 60.0 (13.4112 m/s * 60s)
@@ -359,6 +416,7 @@ pub fn move_agent(
         } else if next_node_data.point == *moving_edge_data.points.last().unwrap() {
             moving_edge_data.points.clone()
         } else {
+            // println!("{} Moving edge: start: {:?} end: {:?}; next_node {:?}", agent.trip_id, moving_edge_data.start_id, moving_edge_data.end_id, next_node_data.id);
             unreachable!("The next node is not on the edge we are moving along");
         };
 
@@ -388,6 +446,8 @@ pub fn move_agent(
                         agent.position.0 + dir.0 * move_distance,
                         agent.position.1 + dir.1 * move_distance,
                     );
+
+                    send_analytics(&agent.analytics, AnalyticsPackage::VehicleEvent(VehicleAnalyticsEvent::MovementTick { id: agent.trip_id, pos: agent.position }));
                     return;
                 }
 
@@ -411,7 +471,7 @@ pub fn move_agent(
                     }
                 }
             } else {
-                println!("Not on line segment {}/{}", i, line.len());
+                // println!("{} Not on line segment {}/{}", agent.trip_id, i, line.len());
             }
         }
 
@@ -481,17 +541,51 @@ pub fn closest_point_on_line_segment_to_point(
     segment: [(f64, f64); 2],
     point: (f64, f64),
 ) -> (f64, f64) {
-    let edge_u = segment[0];
-    let edge_v = segment[1];
+    // let edge_u = segment[0];
+    // let edge_v = segment[1];
 
-    let u_v = (edge_v.0 - edge_u.0, edge_v.1 - edge_u.1);
-    let u_p = (point.0 - edge_u.0, point.1 - edge_u.1);
+    // let u_v = (edge_v.0 - edge_u.0, edge_v.1 - edge_u.1);
+    // let u_p = (point.0 - edge_u.0, point.1 - edge_u.1);
 
-    let proj = (u_v.0 * u_p.0 + u_v.1 * u_p.1) / (u_v.0.powi(2) + u_v.1.powi(2));
-    let u_v_len2 = u_v.0.powi(2) + u_v.1.powi(2);
-    let distance = proj / u_v_len2;
+    // let proj = (u_v.0 * u_p.0 + u_v.1 * u_p.1) / (u_v.0.powi(2) + u_v.1.powi(2));
+    // let u_v_len2 = u_v.0.powi(2) + u_v.1.powi(2);
+    // let distance = proj / u_v_len2;
 
-    (edge_u.0 + distance * u_v.0, edge_u.1 + distance * u_v.1)
+    // (edge_u.0 + distance * u_v.0, edge_u.1 + distance * u_v.1)
+    let p1@(p1_x, p1_y) = segment[0];
+    let p2@(p2_x, p2_y) = segment[1];
+    let (p3_x, p3_y) = point;
+
+    let u = ((p3_x - p1_x) * (p2_x - p1_x) + (p3_y - p1_y) * (p2_y - p1_y))
+        / ((p2_x - p1_x).powi(2) + (p2_y - p1_y).powi(2));
+
+    if u < 0.0 {
+        p1
+    } else if u > 1.0 {
+        p2
+    } else {
+        (p1_x + u * (p2_x - p1_x), p1_y + u * (p2_y - p1_y))
+    }
+}
+
+// Taken from Paul Bourke
+fn dist_point_linesegment_2(segment: [(f64, f64); 2], point: (f64, f64)) -> f64 {
+    let p1@(p1_x, p1_y) = segment[0];
+    let p2@(p2_x, p2_y) = segment[1];
+    let (p3_x, p3_y) = point;
+
+    let u = ((p3_x - p1_x) * (p2_x - p1_x) + (p3_y - p1_y) * (p2_y - p1_y))
+        / ((p2_x - p1_x).powi(2) + (p2_y - p1_y).powi(2));
+
+    let (proj_x, proj_y) = if u < 0.0 {
+        p1
+    } else if u > 1.0 {
+        p2
+    } else {
+        (p1_x + u * (p2_x - p1_x), p1_y + u * (p2_y - p1_y))
+    };
+
+    (p3_x - proj_x).powi(2) + (p3_y - proj_y).powi(2)
 }
 
 // returns the closest (point, offset) for the edge in the graph
