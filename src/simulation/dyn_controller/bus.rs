@@ -109,14 +109,14 @@ impl Passenger {
     pub fn set_travel_start(&mut self, graph: Arc<Graph>) {
         let dist = graph.get_nodelist().get(&self.source_node).expect("Node not found");
         let dist = distance(dist.point, self.source_pos);
-        let ticks = (dist / HUMAN_WALKING_SPEED) as u8;
+        let ticks = (dist / 60.0 * HUMAN_WALKING_SPEED) as u8;
         self.status = Status::TravelStart(ticks);
     }
 
     pub fn set_travel_end(&mut self, graph: Arc<Graph>) {
         let dist = graph.get_nodelist().get(&self.dest_node).expect("Node not found");
         let dist = distance(dist.point, self.dest_pos);
-        let ticks = (dist / HUMAN_WALKING_SPEED) as u8;
+        let ticks = (dist / 60.0 * HUMAN_WALKING_SPEED) as u8;
         self.status = Status::TavelDest(ticks);
     }
 }

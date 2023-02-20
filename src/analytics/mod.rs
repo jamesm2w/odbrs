@@ -5,7 +5,8 @@ use crate::Module;
 pub enum AnalyticsPackage {
     None,
     PassengerEvent(PassengerAnalyticsEvent),
-    VehicleEvent(VehicleAnalyticsEvent)
+    VehicleEvent(VehicleAnalyticsEvent),
+    SimulationEvent(SimulationAnalyticsEvent)
 }
 
 impl AnalyticsPackage {
@@ -13,7 +14,8 @@ impl AnalyticsPackage {
         match self {
             AnalyticsPackage::None => {},
             AnalyticsPackage::PassengerEvent(event) =>  event.handle(analytics),
-            AnalyticsPackage::VehicleEvent(event) => event.handle(analytics)
+            AnalyticsPackage::VehicleEvent(event) => event.handle(analytics),
+            AnalyticsPackage::SimulationEvent(event) => event.handle(analytics)
         }
     }
 }
@@ -71,15 +73,35 @@ impl VehicleAnalyticsEvent {
     }
 }
 
+pub enum SimulationAnalyticsEvent {
+    TickTime { tick: u32, time: f64 }
+}
+
+impl SimulationAnalyticsEvent {
+    fn handle(&self, analytics: &mut Analytics) {
+        match self {
+            SimulationAnalyticsEvent::TickTime { tick, time } => {
+                // println!("Analytics: Tick {} took {} seconds", tick, time);
+                analytics.tick_times.push(*time);
+                analytics.avg_tick_time = analytics.tick_times.iter().sum::<f64>() / analytics.tick_times.len() as f64;
+            }
+        }
+    }
+}
+
 pub struct Analytics {
     tx: Sender<AnalyticsPackage>,
     rx: Receiver<AnalyticsPackage>,
-    
+
+    tick_times: Vec<f64>, // Ticks and the time it took to process them
+    avg_tick_time: f64,
+
     passenger_waits: HashMap<u32, u32>, // Ticks passenger (key) spent waiting
     passenger_travel: HashMap<u32, u32>, // Ticks passenger (key) spent in transit
     passenger_walking: HashMap<u32, (u64, u64)>, // Ticks passenger (key) spent walking from start, ticks spent walking to end
     vehicle_travel: HashMap<u32, u32>, // Ticks vehicle (key) spent in transit
     vehicle_passengers: HashMap<u32, (u64, u64)> // Number of passengers vehicle (key) picked up, dropped off
+
 }
 
 impl Default for Analytics {
@@ -88,6 +110,8 @@ impl Default for Analytics {
         Self {
             rx,
             tx,
+            tick_times: Vec::new(),
+            avg_tick_time: 0.0,
             passenger_waits: HashMap::new(),
             passenger_travel: HashMap::new(),
             passenger_walking: HashMap::new(),
@@ -134,6 +158,7 @@ impl Analytics {
         // Write analytics out to file
         // TODO: write to file
 
+        println!("Average Tick Time: {}", self.avg_tick_time);
         println!("Analytics Sizes: \nPassengers with: \n\tWaits: {} \n\tTravel: {} \n\tWalking: {} \nVehicles with: \n\tTravel: {} \n\tPassengers: {}", self.passenger_waits.len(), self.passenger_travel.len(), self.passenger_walking.len(), self.vehicle_travel.len(), self.vehicle_passengers.len());
 
         let output_path = format!(r#"data/output/{}-passenger-output.csv"#, chrono::Local::now().format("%Y-%m-%d-%H-%M-%S"));

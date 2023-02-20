@@ -11,7 +11,7 @@ use eframe::epaint::{pos2, Color32, Shape};
 use crate::{graph::Graph, analytics::{AnalyticsPackage, VehicleAnalyticsEvent}};
 
 use self::{
-    agent::{BusPassenger, StaticAgent},
+    agent::{BusPassenger, StaticAgent, PassengerStatus},
     routes::{closest_stop_to_point, NetworkData},
 };
 
@@ -37,11 +37,11 @@ impl Controller for StaticController {
     }
 
     fn spawn_agent(&mut self, graph: std::sync::Arc<crate::graph::Graph>) -> Option<&Self::Agent> {
-        self.network_data.trips.iter().for_each(|(id, trip)| {
-            // if trip.timings[0].0 != NaiveTime::from_hms(0, 0, 0) {
-            //     println!("Agent {} has a start time of {:?}", id, trip.timings[0]);
-            // }
-        });
+        // self.network_data.trips.iter().for_each(|(id, trip)| {
+        //     // if trip.timings[0].0 != NaiveTime::from_hms(0, 0, 0) {
+        //     //     println!("Agent {} has a start time of {:?}", id, trip.timings[0]);
+        //     // }
+        // });
         // println!("Spawning {} agents", self.network_data.trips.len());
         // self.network_data.trips.iter().for_each(|(id, _)| {
         //     let timer = std::time::Instant::now();
@@ -92,12 +92,11 @@ impl Controller for StaticController {
                 );
             });
 
-        // TODO: actually use a sane demand generation which is consistent across static/dynamic controllers
-        let demand_queue = demand.generate_amount(2, &time, Err(self.network_data.clone()));
+        let demand_queue = demand.generate_scaled_amount(1.0/20.0, &time, Err(self.network_data.clone()));
         let demand_queue: VecDeque<_> = demand_queue
             .into_iter()
             .map(|d| {
-                let passenger = demand_to_passenger(d, graph.clone(), self.network_data.clone(), time, self.passenger_id);
+                let passenger = demand_to_passenger(d, graph.clone(), self.network_data.clone(), time, self.passenger_id, self.analytics.clone());
                 self.passenger_id += 1;
                 passenger
             })
@@ -107,6 +106,7 @@ impl Controller for StaticController {
         self.passengers.extend(demand_queue);
 
         for agent in self.buses.values_mut() {
+            let trip_id = agent.trip_id;
             agent.move_self(time, |trip, stop, drop_off_passengers| {
                 let mut passengers = Vec::new();
                 let mut i = 0;
@@ -118,10 +118,11 @@ impl Controller for StaticController {
                         i += 1;
                     }
                 }
+                
                 self.passengers
                     .extend(drop_off_passengers.into_iter().map(|mut p| {
                         let id = p.id.clone();
-                        agent::send_analytics(&self.analytics, AnalyticsPackage::VehicleEvent(VehicleAnalyticsEvent::PassengerDropoff { id: trip, passenger_id: id }));
+                        agent::send_analytics(&self.analytics, AnalyticsPackage::VehicleEvent(VehicleAnalyticsEvent::PassengerDropoff { id: trip_id, passenger_id: id }));
                         p.get_off_bus();
                         p
                     }));
@@ -177,6 +178,7 @@ pub fn demand_to_passenger(
     network_data: Arc<NetworkData>,
     tick: DateTime<Utc>,
     id: u32, 
+    analytics: Option<Sender<AnalyticsPackage>>,
 ) -> Option<BusPassenger> {
     let source = demand.0;
     let dest = demand.1;
@@ -197,32 +199,98 @@ pub fn demand_to_passenger(
     let (destination_bus_stop, dest_dist) =
         closest_stop_to_point((dest.0 as f64, dest.1 as f64), network_data.clone());
 
+    let control = basic_route_finding(source_bus_stop, destination_bus_stop, network_data.clone());
+
+    let status = match control.first() {
+        None => PassengerStatus::Finished,
+        Some(Control::TakeBus { .. }) => {
+            PassengerStatus::Waiting
+        },
+        Some(Control::WalkToStop { destination_stop, .. }) => {
+            let stop_data = network_data.stops.get(destination_stop).expect("Stop was not a stop");
+            let dist = distance((source.0 as f64, source.1 as f64), stop_data.position());
+            PassengerStatus::Walking((dist / (60.0 * 1.4)) as u32)
+        }
+    };
+
+    Some(BusPassenger {
+        id,
+        source_pos: (source.0 as f64, source.1 as f64),
+        source_stop: source_bus_stop,
+
+        dest_pos: (dest.0 as f64, dest.1 as f64),
+        dest_stop: destination_bus_stop,
+
+        instructions: VecDeque::from_iter(control.into_iter()),
+        status,
+        analytics,
+    })
+}
+
+// Very basic route finding for passenger
+// just get source stop and take next trip closest to destination
+pub fn basic_route_finding(source_stop: u32, dest_stop: u32, network_data: Arc<NetworkData>) -> Vec<Control> {
+    let dest_stop_data = network_data.stops.get(&dest_stop).expect("Stop was not a stop");
+    let mut control = Vec::new();
+    let trips_from_source = network_data.trips_from_stop.get(&source_stop).expect("Stop was not a stop");
+
+    control.push(Control::walk_to_stop(source_stop, None));
+
+    let mut min_trip_dist = f64::MAX;
+    let mut min_trip = 0;
+    let mut min_trip_end_stop = 0;
+
+    for trip in trips_from_source {
+        let trip_data = network_data.trips.get(trip).expect("Trip ID was not a trip");
+        let trip_stops = &trip_data.stops;
+        let mut min_trip_stop_dist = f64::MAX;
+        let mut min_trip_stop = 0;
+
+        for stop in trip_stops {
+            let stop_data = network_data.stops.get(stop).expect("Stop was not a stop");
+            let dist = distance(stop_data.position(), dest_stop_data.position());
+            if dist < min_trip_stop_dist {
+                min_trip_stop_dist = dist;
+                min_trip_stop = *stop;
+            }
+        }
+
+        if min_trip_stop_dist < min_trip_dist {
+            min_trip_dist = min_trip_stop_dist;
+            min_trip = *trip;
+            min_trip_end_stop = min_trip_stop;
+        }
+    }
+
+    control.push(Control::take_bus(min_trip, source_stop, min_trip_end_stop));
+    control.push(Control::walk_to_stop(dest_stop, Some(min_trip_end_stop)));
+    control
+}
+
+// Full route finding for passenger
+// try to get to the destination stop exactly
+pub fn full_route_finding(source: (f32, f32), dest: (f32, f32), network_data: Arc<NetworkData>, tick: DateTime<Utc>) -> VecDeque<Control> {
+    let (source_bus_stop, source_dist) =
+        closest_stop_to_point((source.0 as f64, source.1 as f64), network_data.clone());
+
+    let (destination_bus_stop, dest_dist) =
+        closest_stop_to_point((dest.0 as f64, dest.1 as f64), network_data.clone());
     let mut control = VecDeque::new();
 
-    let HUMAN_WALKING_SPEED = 1.3; // human walking speed in m/s
+    let HUMAN_WALKING_SPEED = 1.4; // human walking speed in m/s
     let MAX_DEPTH = 3; // max depth of search for a trip to the destination. If we can't find it within 3 trips, we just walk/reject
 
-    if source_dist > HUMAN_WALKING_SPEED * 30.0 * 60.0 {
-        // Reject the trip if its over 30 minutes from the source stop
-        return None;
-    } else {
-        // push walking control to the source bus stop to start
-        control.push_back(Control::walk_to_stop(source_bus_stop, None));
-    }
+    // push walking control to the source bus stop to start
+    control.push_back(Control::walk_to_stop(source_bus_stop, None));
 
     let mut stop_neighbourhood = routes::stop_neighbourhood_pos( (source.0 as f64, source.1 as f64) , HUMAN_WALKING_SPEED * 30.0 * 60.0, network_data.clone());
-
     let end_neighbourhood = routes::stop_neighbourhood_pos( (dest.0 as f64, dest.1 as f64) , HUMAN_WALKING_SPEED * 30.0 * 60.0, network_data.clone());
-    if end_neighbourhood.is_empty() {
-        // Reject the trip if the destination is not within 30 minutes of a bus stop
-        return None;
-    }
 
     let mut current_stop = source_bus_stop;
     loop {
         if control.len() > MAX_DEPTH * 2 {
             // Reject the trip if we can't find a trip to the destination within 3 trips
-            return None;
+            return control;
         }
 
         // find a possible next trip
@@ -273,18 +341,7 @@ pub fn demand_to_passenger(
         }
     }
 
-    Some(BusPassenger {
-        id,
-        source_pos: (source.0 as f64, source.1 as f64),
-        source_stop: source_bus_stop,
-
-        dest_pos: (dest.0 as f64, dest.1 as f64),
-        dest_stop: destination_bus_stop,
-
-        instructions: control,
-
-        ..Default::default()
-    })
+    control
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

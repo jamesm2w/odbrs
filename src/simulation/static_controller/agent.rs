@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::VecDeque, rc::Rc, sync::{Arc, mpsc::Sender}};
+use std::{collections::VecDeque, sync::{Arc, mpsc::Sender}};
 
 use chrono::Utc;
 use eframe::epaint::{Shape, pos2, Stroke, Color32};
@@ -26,15 +26,17 @@ pub fn send_analytics(analytics: &Option<Sender<AnalyticsPackage>>, event: Analy
         }
     } else {
         // println!("[ANALYTICS] No analytics channel found!");
+        panic!("trying to send analytics without a channel")
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PassengerStatus {
-    Generated,
-    Waiting,
-    OnBus,
-    Finished,
+    Generated, // Generated but not yet waiting
+    Waiting, // Waiting at a bus stop
+    Walking(u32), // Walking with x ticks left
+    OnBus, // On a bus to a destination
+    Finished, // Finished
 }
 
 impl Default for PassengerStatus {
@@ -62,31 +64,41 @@ pub struct BusPassenger {
 impl BusPassenger {
     // get stop to get off at, or stop which will be getting on at (waiting)
     pub fn get_next_stop(&self) -> u32 {
-        println!("passenger instructions {:?} status {:?}", self.instructions, self.status);
+        // println!("passenger instructions {:?} status {:?}", self.instructions, self.status);
         match self.instructions[0] {
-            Control::TakeBus{source, destination, trip_id} => match self.status {
+            Control::TakeBus{source, destination, ..} => match self.status {
                 PassengerStatus::Waiting => source,
                 PassengerStatus::OnBus => destination,
-                _ => panic!("Invalid passenger status"),
+                PassengerStatus::Walking(_) => source,
+                _ => source, //panic!("Invalid passenger status {:?} for trying to get the next stop", self.status),
             },
-            Control::WalkToStop{destination_stop, source_stop} => destination_stop,
+            Control::WalkToStop{ destination_stop, .. } => destination_stop,
         }
     }
 
     pub fn get_next_trip_id(&self) -> u32 {
         match self.instructions[0] {
             Control::TakeBus{ trip_id, .. } => trip_id,
-            _ => panic!("Invalid passenger status"),
+            Control::WalkToStop { .. } => {
+                for control in self.instructions.iter() {
+                    if let Control::TakeBus { trip_id, .. } = control {
+                        return *trip_id;
+                    }
+                }
+                panic!("No trip id found in instructions");
+            },
+            // _ => panic!("Invalid passenger status"),
         }
     }
 
+    // TODO: walk to final destination here
     pub fn get_off_bus(&mut self) {
         self.instructions.pop_front();
         self.status = PassengerStatus::Finished;
     }
 
     pub fn get_on_bus(&mut self) {
-        // self.instructions.pop_front(); // Maybe don't need to do this since on bus you should have intruction of taking bus
+        //self.instructions.pop_front(); // Maybe don't need to do this since on bus you should have intruction of taking bus
         self.status = PassengerStatus::OnBus;
     }
 
@@ -97,6 +109,28 @@ impl BusPassenger {
             },
             PassengerStatus::OnBus => {
                 send_analytics(&self.analytics, AnalyticsPackage::PassengerEvent(PassengerAnalyticsEvent::InTransitTick { id: self.id }))
+            },
+            PassengerStatus::Walking(ticks_left) => {
+                if ticks_left == 0 {
+                    if let Control::WalkToStop { .. } = self.instructions[0] {
+                        self.instructions.pop_front();
+                    }
+                    // self.status = PassengerStatus::Waiting;
+                    // self.instructions.pop_front();
+                    match self.instructions.front() {
+                        Some(Control::TakeBus { .. }) => { // if next instruction is to take a bus we're waiting for it at the stop
+                            self.status = PassengerStatus::Waiting;
+                        },
+                        Some(Control::WalkToStop { .. }) => { // if next instruction is to walk to a stop we're walking to it
+                            self.status = PassengerStatus::Walking(0);
+                        },
+                        None => {
+                            self.status = PassengerStatus::Finished;
+                        },
+                    }
+                } else {
+                    self.status = PassengerStatus::Walking(ticks_left - 1);
+                }
             },
             PassengerStatus::Generated | PassengerStatus::Finished => {},
         }
@@ -114,8 +148,6 @@ impl Default for BusStatus {
         BusStatus::Unactive
     }
 }
-
-type StopAccessFunction = Box<dyn Fn(u32, u32) -> Vec<Rc<RefCell<BusPassenger>>>>;
 
 pub struct StaticAgent {
     pub position: (f64, f64),
@@ -319,11 +351,11 @@ impl StaticAgent {
             .unwrap()
             .0;
         if tick.time() < start_time {
-            println!("agent {} is not active", self.trip_id);
+            // println!("agent {} is not active", self.trip_id);
             self.status = BusStatus::Unactive;
             return;
         } else {
-            println!("agent {} is active", self.trip_id);
+            // println!("agent {} is active", self.trip_id);
             self.status = BusStatus::Active;
         }
         // when time tick is in trip => bus is active and moves along the trip route
@@ -336,14 +368,13 @@ impl StaticAgent {
         // TODO: move code
         move_agent(self, tick, |trip_id, stop_id, agent| {
             // TODO: stop checking codeclaer
-            println!("=== ### agent {} is at stop {} ### ===", trip_id, stop_id);
+            // println!("=== ### agent {} is at stop {} ### ===", trip_id, stop_id);
 
             let mut passengers_to_drop = Vec::new();
             let mut i = 0;
             while i < agent.passengers.len() {
                 let passenger = agent.passengers.get(i).unwrap();
                 if passenger.get_next_stop() == stop_id {
-                    // TODO: check if this is their stop
                     passengers_to_drop.push(agent.passengers.remove(i));
                 } else {
                     i += 1;
@@ -351,8 +382,8 @@ impl StaticAgent {
             }
 
             // TODO: get the stop ID if at a stop
-            let passengers_to_pick_up =
-                pick_up_and_drop_off_passengers(trip_id, stop_id, passengers_to_drop);
+            let passengers_to_pick_up = pick_up_and_drop_off_passengers(trip_id, stop_id, passengers_to_drop);
+
             agent
                 .passengers
                 .extend(passengers_to_pick_up.into_iter().map(|mut p| {

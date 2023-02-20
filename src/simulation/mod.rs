@@ -11,10 +11,10 @@ use chrono::{DateTime, NaiveDateTime, NaiveTime, Utc};
 use eframe::epaint::{pos2, Color32, Shape, Stroke};
 use serde::Deserialize;
 
-use crate::{graph::Graph, gui::AppMessage, resource::load_image::DemandResources, Module, analytics::AnalyticsPackage};
+use crate::{graph::Graph, gui::AppMessage, resource::load_image::DemandResources, Module, analytics::{AnalyticsPackage, SimulationAnalyticsEvent}};
 
 use self::{
-    demand::DemandGenerator, dyn_controller::bus::CurrentElement,
+    demand::DemandGenerator, dyn_controller::bus::{CurrentElement, send_analytics},
     static_controller::routes::NetworkData,
 };
 
@@ -23,7 +23,7 @@ pub mod dyn_controller;
 pub mod random_controller;
 pub mod static_controller;
 
-const STATIC_ONLY: bool = false; // true = static only, false = dynamic only
+const STATIC_ONLY: bool = true; // true = static only, false = dynamic only
 
 /// Simulation controls the running of the simulation
 /// - Simluation tick does stuff at intervals
@@ -177,9 +177,26 @@ impl Simulation {
 
             match self.state {
                 SimulationState::Running => {
+                    let timer = std::time::Instant::now();
                     self.tick();
+                    let time = timer.elapsed();
                     self.send_state();
-                    thread::sleep(Duration::from_millis(self.speed));
+                    
+                    send_analytics(&self.analytics_tx, AnalyticsPackage::SimulationEvent( SimulationAnalyticsEvent::TickTime { tick: 0, time: time.as_secs_f64() } ));
+                    if time > Duration::from_millis(self.speed) {
+                        println!(
+                            "[SIMULATION] Tick took longer than the speed! {:?} > {:?}",
+                            time,
+                            Duration::from_millis(self.speed)
+                        );
+                    } else {
+                        thread::sleep(Duration::from_millis(self.speed));
+                    }
+
+                    if self.i.time() > NaiveTime::from_hms(23, 0, 0) {
+                        println!("[SIMULATION] Stopping at 23:00:00");
+                        self.state = SimulationState::Stopped;
+                    }
                 }
                 SimulationState::Paused => {}
                 SimulationState::Stopped => break,

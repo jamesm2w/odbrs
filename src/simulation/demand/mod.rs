@@ -227,12 +227,16 @@ impl DemandGenerator {
     // Generates an amount of demand
     pub fn generate_amount(&self, amount: usize, time: &DateTime<Utc>, data: Result<Arc<Graph>, Arc<NetworkData>>) -> VecDeque<Demand> {
         let mut vec = VecDeque::with_capacity(amount);
-        while vec.len() < amount {
+        let mut attempts = 0; // limit number of failed generation attempts to keep it fast
+
+        while vec.len() < amount && attempts < 10 {
+            println!("Generating demand {}/{}", vec.len(), amount);
             let demand = self.generate_random_pixel(time);
             if should_accept_demand(&demand, data.clone()) {
                 vec.push_back(demand);
+                attempts = 0; // reset attempts after successful generation
             } else {
-                // vec.push_back(demand);
+                attempts += 1; // increment attempts after failed generation
                 continue;
             }
         }
