@@ -8,3 +8,5 @@
 - run full scale tests
 
 - improve the UI / usability / QoL
+
+- try to fix loads of passengers just not getting on a bus

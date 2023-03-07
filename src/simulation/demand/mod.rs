@@ -230,7 +230,7 @@ impl DemandGenerator {
         let mut attempts = 0; // limit number of failed generation attempts to keep it fast
 
         while vec.len() < amount && attempts < 10 {
-            println!("Generating demand {}/{}", vec.len(), amount);
+            // println!("Generating demand {}/{}", vec.len(), amount);
             let demand = self.generate_random_pixel(time);
             if should_accept_demand(&demand, data.clone()) {
                 vec.push_back(demand);

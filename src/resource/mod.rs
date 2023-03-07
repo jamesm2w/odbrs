@@ -2,12 +2,13 @@ use std::{fs, path::PathBuf};
 
 use crate::{
     graph::{self, AdjacencyList},
-    gui, simulation, Module, resource::load_image::load_images,
+    gui::{self, onboarding::SettingOverrides},
+    resource::load_image::load_images,
+    simulation, Module,
 };
-use gtfs_structures::Gtfs;
 use serde::Deserialize;
 
-use self::load_image::{DemandResourcesConfig, DemandResources};
+use self::load_image::{DemandResources, DemandResourcesConfig};
 
 pub mod load_graph;
 pub mod load_image;
@@ -29,9 +30,9 @@ impl Module for Resources {
         <simulation::Simulation as Module>::Configuration,
         <graph::Graph as Module>::Configuration,
         AdjacencyList,
-        DemandResources
+        DemandResources,
     );
-    type Parameters = ();
+    type Parameters = SettingOverrides;
 
     fn get_name(&self) -> &str {
         "Resources"
@@ -40,11 +41,18 @@ impl Module for Resources {
     fn init(
         &mut self,
         _config: Self::Configuration,
-        _parameters: Self::Parameters,
+        parameters: Self::Parameters,
     ) -> Result<Self::ReturnType, Box<dyn std::error::Error>> {
         let time = std::time::Instant::now();
+        
+        
+        let path = if parameters.config_file_path != "" {
+            PathBuf::from(parameters.config_file_path)
+        } else {
+            _config
+        };
 
-        let data = fs::read(_config)?;
+        let data = fs::read(path)?;
         let config_file: ConfigFile = toml::from_slice(data.as_slice())?;
 
         let graph = match self.load_graph(&config_file) {
@@ -52,7 +60,12 @@ impl Module for Resources {
             None => Err("Error in loading graph"),
         }?;
 
-        let sim_cfg = config_file.simulation;
+        let mut sim_cfg = config_file.simulation;
+
+        sim_cfg.static_only = parameters.is_static;
+        sim_cfg.dyn_agent_count = parameters.num_agents;
+        sim_cfg.demand_scale = parameters.demand_scale;
+
         let gui_cfg = config_file.app;
         let gph_cfg = config_file.graph;
 
@@ -71,7 +84,7 @@ struct ConfigFile {
     pub simulation: <simulation::Simulation as Module>::Configuration,
     pub graph: <graph::Graph as Module>::Configuration,
     pub defaults: Vec<GraphConfig>,
-    pub demand: DemandResourcesConfig
+    pub demand: DemandResourcesConfig,
 }
 
 // Stores the config for this resource module
@@ -140,10 +153,5 @@ impl Resources {
 
             Some(adjlist)
         }
-    }
-
-    fn load_gtfs_data(&self, config: ()) -> Option<Gtfs> {
-        // TODO: Load gtfs data from file
-        None
     }
 }

@@ -25,6 +25,7 @@ use self::{hover_control::HoverControl, simulation_control::SimulationControl};
 
 mod hover_control;
 mod simulation_control;
+pub mod onboarding;
 
 /// Gui contains the GUI for the app obviously
 /// - Function for view of the app

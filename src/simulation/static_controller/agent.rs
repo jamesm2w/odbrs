@@ -23,6 +23,7 @@ pub fn send_analytics(analytics: &Option<Sender<AnalyticsPackage>>, event: Analy
             panic!("[ANALYTICS] Unable to send analytics: {:?}", err);
         } else {
             // println!("[ANALYTICS] Sent analytics event!");
+            return;
         }
     } else {
         // println!("[ANALYTICS] No analytics channel found!");
@@ -49,12 +50,16 @@ impl Default for PassengerStatus {
 #[derive(Default, Debug, Clone)]
 pub struct BusPassenger {
     pub id: u32,
-    pub source_pos: (f64, f64),
-    pub source_stop: u32,
 
-    pub dest_pos: (f64, f64),
-    pub dest_stop: u32,
+    // Global source information
+    pub source_pos: (f64, f64), // Position
+    pub source_stop: u32, // Closest bus stop
 
+    // Global destination information
+    pub dest_pos: (f64, f64), // Position
+    pub dest_stop: u32, // Closest bus stop
+
+    // List of instructions to follow. Both walking and bus instructions
     pub instructions: VecDeque<Control>,
 
     pub status: PassengerStatus,
@@ -62,79 +67,96 @@ pub struct BusPassenger {
 }
 
 impl BusPassenger {
-    // get stop to get off at, or stop which will be getting on at (waiting)
-    pub fn get_next_stop(&self) -> u32 {
-        // println!("passenger instructions {:?} status {:?}", self.instructions, self.status);
-        match self.instructions[0] {
-            Control::TakeBus{source, destination, ..} => match self.status {
-                PassengerStatus::Waiting => source,
-                PassengerStatus::OnBus => destination,
-                PassengerStatus::Walking(_) => source,
-                _ => source, //panic!("Invalid passenger status {:?} for trying to get the next stop", self.status),
-            },
-            Control::WalkToStop{ destination_stop, .. } => destination_stop,
+
+    // Should passenger get on this bus (trip, stop)
+    pub fn should_get_on(&self, trip: u32, stop: u32, network_data: Arc<NetworkData>) -> bool {
+        if let Some(Control { destination_stop, source: Ok(source) }) = self.instructions.front() {            
+            // Does the trip contain the destination stop?
+            let stop_on_trip = network_data.trips.get(&trip).unwrap().stops.contains(destination_stop);
+
+            *source == stop && self.status == PassengerStatus::Waiting && stop_on_trip
+        } else {
+            false
         }
     }
 
-    pub fn get_next_trip_id(&self) -> u32 {
-        match self.instructions[0] {
-            Control::TakeBus{ trip_id, .. } => trip_id,
-            Control::WalkToStop { .. } => {
-                for control in self.instructions.iter() {
-                    if let Control::TakeBus { trip_id, .. } = control {
-                        return *trip_id;
+    pub fn get_on_bus(&mut self, agent_id: u32) {
+        if self.status == PassengerStatus::Waiting {
+            send_analytics(&self.analytics, AnalyticsPackage::VehicleEvent(VehicleAnalyticsEvent::PassengerPickup { id: agent_id, passenger_id: self.id }));
+            self.status = PassengerStatus::OnBus;
+        } else {
+            panic!("Trying to get on bus when not waiting");
+        }
+    }
+
+    pub fn should_get_off(&self, stop: u32) -> bool {
+        if let Some(Control { destination_stop, .. }) = self.instructions.front() {
+            *destination_stop == stop && self.status == PassengerStatus::OnBus
+        } else {
+            false
+        }
+    }
+
+    pub fn get_off_bus(&mut self, agent_id: u32) {
+        if self.status == PassengerStatus::OnBus {
+            send_analytics(&self.analytics, AnalyticsPackage::VehicleEvent(VehicleAnalyticsEvent::PassengerDropoff { id: agent_id, passenger_id: self.id }));
+            self.status = PassengerStatus::Generated;
+            self.instructions.pop_front();
+        } else {
+            panic!("Trying to get off bus when not on bus");
+        }
+    }
+
+    pub fn update(&mut self, network_data: Arc<NetworkData>) {
+        match self.status {
+            PassengerStatus::Generated => {
+                // Passenger has just been generated want to move on immediately from this state (first update)    
+                match self.instructions.front() {
+                    Some(Control { destination_stop, source: Err(pos) }) => {
+                        // Passenger is walking to a stop
+                        let dest_point = network_data.stops.get(destination_stop).unwrap().position();
+                        let distance = distance(*pos, dest_point);
+                        self.status = PassengerStatus::Walking((distance / 1.4) as u32); // TODO: calculate ticks
+                    },
+                    Some(Control { destination_stop, source: Ok(stop) }) => {
+                        // Passenger is waiting at a `stop` to go to `destination_stop`
+                        self.status = PassengerStatus::Waiting;
+                    },
+                    None => {
+                        // Passenger has no instructions
+                        self.status = PassengerStatus::Finished;
                     }
                 }
-                panic!("No trip id found in instructions");
             },
-            // _ => panic!("Invalid passenger status"),
-        }
-    }
-
-    // TODO: walk to final destination here
-    pub fn get_off_bus(&mut self) {
-        self.instructions.pop_front();
-        self.status = PassengerStatus::Finished;
-    }
-
-    pub fn get_on_bus(&mut self) {
-        //self.instructions.pop_front(); // Maybe don't need to do this since on bus you should have intruction of taking bus
-        self.status = PassengerStatus::OnBus;
-    }
-
-    pub fn update(&mut self) {
-        match self.status {
+            PassengerStatus::Walking(ticks_remaining) => {
+                // Passenger is walking to a stop and has to do this for `ticks_remaining` ticks
+                match ticks_remaining {
+                    0 => {
+                        // Passenger has finished walking
+                        self.status = PassengerStatus::Generated;
+                        self.instructions.pop_front();
+                        self.update(network_data);
+                    },
+                    _ => {
+                        send_analytics(&self.analytics, AnalyticsPackage::PassengerEvent(PassengerAnalyticsEvent::StartWalkingTick { id: self.id }));
+                        self.status = PassengerStatus::Walking(ticks_remaining - 1);
+                    }
+                }
+            },
             PassengerStatus::Waiting => {
-                send_analytics(&self.analytics, AnalyticsPackage::PassengerEvent(PassengerAnalyticsEvent::WaitingTick { id: self.id, waiting_pos: self.source_pos }))
+                // Passenger is waiting at a stop after having arrived at it
+                send_analytics(&self.analytics, AnalyticsPackage::PassengerEvent(PassengerAnalyticsEvent::WaitingTick { id: self.id, waiting_pos: (0.0, 0.0) }));
             },
             PassengerStatus::OnBus => {
-                send_analytics(&self.analytics, AnalyticsPackage::PassengerEvent(PassengerAnalyticsEvent::InTransitTick { id: self.id }))
+                // Passenger is on a bus and is on it until the bus reaches the end stop
+                send_analytics(&self.analytics, AnalyticsPackage::PassengerEvent(PassengerAnalyticsEvent::InTransitTick { id: self.id }));
             },
-            PassengerStatus::Walking(ticks_left) => {
-                if ticks_left == 0 {
-                    if let Control::WalkToStop { .. } = self.instructions[0] {
-                        self.instructions.pop_front();
-                    }
-                    // self.status = PassengerStatus::Waiting;
-                    // self.instructions.pop_front();
-                    match self.instructions.front() {
-                        Some(Control::TakeBus { .. }) => { // if next instruction is to take a bus we're waiting for it at the stop
-                            self.status = PassengerStatus::Waiting;
-                        },
-                        Some(Control::WalkToStop { .. }) => { // if next instruction is to walk to a stop we're walking to it
-                            self.status = PassengerStatus::Walking(0);
-                        },
-                        None => {
-                            self.status = PassengerStatus::Finished;
-                        },
-                    }
-                } else {
-                    self.status = PassengerStatus::Walking(ticks_left - 1);
-                }
-            },
-            PassengerStatus::Generated | PassengerStatus::Finished => {},
+            PassengerStatus::Finished => {
+                // Passenger has finished their journey
+            }
         }
     }
+
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -249,6 +271,11 @@ impl Agent for StaticAgent {
 }
 
 impl StaticAgent {
+
+    pub fn get_capacity(&self) -> usize {
+        return 45 - self.passengers.len() as usize;
+    }
+
     pub fn new(trip_id: u32, graph: Arc<Graph>, network_data: Arc<NetworkData>, analytics: Option<Sender<AnalyticsPackage>>) -> Self {
         let (trip_route, trip_stop_edges) =
             routes::convert_trip_to_graph_path(trip_id, graph.clone(), network_data.clone());
@@ -362,35 +389,33 @@ impl StaticAgent {
         // trying to stick to timings as much as possible
 
         self.passengers.iter_mut().for_each(|passenger| {
-            passenger.update();
+            passenger.update(self.network_data.clone());
         });
 
-        // TODO: move code
+        let agent_trip_id = self.trip_id;
+
+        // This callback function is executed when the static agent passes a bus stop
         move_agent(self, tick, |trip_id, stop_id, agent| {
-            // TODO: stop checking codeclaer
-            // println!("=== ### agent {} is at stop {} ### ===", trip_id, stop_id);
 
             let mut passengers_to_drop = Vec::new();
             let mut i = 0;
             while i < agent.passengers.len() {
                 let passenger = agent.passengers.get(i).unwrap();
-                if passenger.get_next_stop() == stop_id {
+
+                if passenger.should_get_off(stop_id) {
                     passengers_to_drop.push(agent.passengers.remove(i));
                 } else {
                     i += 1;
                 }
             }
 
-            // TODO: get the stop ID if at a stop
-            let passengers_to_pick_up = pick_up_and_drop_off_passengers(trip_id, stop_id, passengers_to_drop);
+            let mut passengers_to_pick_up = pick_up_and_drop_off_passengers(trip_id, stop_id, passengers_to_drop);
+            
+            passengers_to_pick_up.iter_mut().for_each(|p| {
+                p.get_on_bus(agent_trip_id);
+            });
 
-            agent
-                .passengers
-                .extend(passengers_to_pick_up.into_iter().map(|mut p| {
-                    send_analytics(&agent.analytics, AnalyticsPackage::VehicleEvent(VehicleAnalyticsEvent::PassengerPickup { id: agent.trip_id, passenger_id: p.id }));
-                    p.get_on_bus();
-                    p
-                }));
+            agent.passengers.extend(passengers_to_pick_up.into_iter());
         });
     }
 
@@ -413,9 +438,9 @@ pub fn move_agent(
         return; // No path to follow
     }
 
-    println!("{} Move self", agent.trip_id);
-    println!("{} Current element: {:?}", agent.trip_id, agent.current_element);
-    println!("{} Next node: {:?}", agent.trip_id, agent.next_node);
+    // println!("{} Move self", agent.trip_id);
+    // println!("{} Current element: {:?}", agent.trip_id, agent.current_element);
+    // println!("{} Next node: {:?}", agent.trip_id, agent.next_node);
     // println!("Path: {:?}", self.path_full);
 
     let mut move_distance = 804.672; //10.0; 804.672 = 13.4112 * 60.0 (13.4112 m/s * 60s)

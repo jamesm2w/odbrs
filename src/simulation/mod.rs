@@ -23,7 +23,7 @@ pub mod dyn_controller;
 pub mod random_controller;
 pub mod static_controller;
 
-const STATIC_ONLY: bool = true; // true = static only, false = dynamic only
+//const STATIC_ONLY: bool = true; // true = static only, false = dynamic only
 
 /// Simulation controls the running of the simulation
 /// - Simluation tick does stuff at intervals
@@ -58,6 +58,10 @@ pub struct Simulation {
     dyn_controller: dyn_controller::DynamicController,
     static_controller: static_controller::StaticController,
     // agents: Vec<random_controller::RandomAgent>,
+
+    static_only: bool,
+    dynamic_agent_count: usize,
+    demand_scale: f64
 }
 
 // The current state of the simulation
@@ -88,12 +92,15 @@ impl Module for Simulation {
 
     fn init(
         &mut self,
-        _config: Self::Configuration,
+        config: Self::Configuration,
         parameters: Self::Parameters,
     ) -> Result<Self::ReturnType, Box<dyn std::error::Error>> {
         let time = std::time::Instant::now();
 
-        // self.i = Utc::now(); // TODO: Move into config?
+        self.static_only = config.static_only;
+        self.dynamic_agent_count = config.dyn_agent_count;
+        self.demand_scale = config.demand_scale;
+
         self.i = DateTime::from_utc(
             NaiveDateTime::new(Utc::now().date_naive(), NaiveTime::from_hms(5, 0, 0)),
             Utc,
@@ -107,10 +114,10 @@ impl Module for Simulation {
         self.graph = parameters.graph;
         self.speed = 100; // TODO: Config this?
 
-        if !STATIC_ONLY {
+        if !self.static_only {
             self.dyn_controller.set_analytics(self.analytics_tx.clone());
 
-            for _ in 0..100 {
+            for _ in 0..self.dynamic_agent_count {
                 // TODO: Change this number -- config maybe?
                 self.dyn_controller.spawn_agent(self.graph.clone());
             }
@@ -129,7 +136,7 @@ impl Module for Simulation {
         self.demand_generator = Some(DemandGenerator::start(
             parameters.demand_resources,
             self.graph.clone(),
-            if !STATIC_ONLY {
+            if !self.static_only {
                 Ok(self.graph.clone())
             } else {
                 Err(self.network_data.clone())
@@ -156,7 +163,9 @@ pub enum SimulationMessage {
 
 #[derive(Default, Deserialize)]
 pub struct SimulationConfig {
-    test: String,
+    pub static_only: bool, // true = static only, false = dynamic only
+    pub dyn_agent_count: usize,
+    pub demand_scale: f64,
 }
 
 pub struct SimulationParameters {
@@ -217,7 +226,7 @@ impl Simulation {
             .send(AppMessage::SimulationStateWithAgents(
                 self.i.clone(),
                 self.state.clone(),
-                if !STATIC_ONLY {
+                if !self.static_only {
                     self.dyn_controller
                         .get_agents()
                         .into_iter()
@@ -269,7 +278,7 @@ impl Simulation {
         // self.demand_generator.as_ref().unwrap().tick(self.i);
 
         // println!("Sim tick {:?}", self.i);
-        if !STATIC_ONLY {
+        if !self.static_only {
             self.dyn_controller.update_agents(
                 self.graph.clone(),
                 self.demand_generator.as_ref().unwrap().clone(),
@@ -317,7 +326,7 @@ pub trait Agent {
 pub fn default_display<T: Agent + ?Sized>(agent: &T) -> Shape {
     let position = agent.get_position();
     let element = agent.get_current_element();
-    let next_node = agent.get_next_node();
+    let _next_node = agent.get_next_node();
     let graph = agent.get_graph();
 
     match element {
