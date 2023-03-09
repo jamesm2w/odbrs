@@ -1,6 +1,6 @@
 use std::{sync::Arc, cell::RefCell};
 
-use eframe::{egui::{CentralPanel}};
+use eframe::{egui::{CentralPanel, Frame, style::Margin}, epaint::Color32};
 
 pub struct Onboarding {
     setting_ref: Arc<RefCell<Result<SettingOverrides, ()>>>,
@@ -25,25 +25,41 @@ impl Onboarding {
 impl eframe::App for Onboarding {
     fn update(&mut self, ctx: &eframe::egui::Context, frame: &mut eframe::Frame) {
         
-        CentralPanel::default().show(ctx, |ui| {
+        CentralPanel::default().frame(Frame::none().inner_margin(Margin::symmetric(20.0, 20.0)).fill(Color32::from_rgb(20, 20, 20))).show(ctx, |ui| {
             
-            ui.vertical(|ui| {
+            ui.vertical_centered(|ui| {
                 
                 ui.heading("On Demand Bus Routing Simulation (ODBRS)");
                 ui.label("Welcome to ODBRS! Please enter a few parameters before the simulation launchs");
                 
-                ui.radio_value(&mut self.is_static, false, "Dynamic Agents");
-                ui.radio_value(&mut self.is_static, true, "Static Agents");
-                
-                ui.add(eframe::egui::Slider::new(&mut self.num_agents, 0..=100).text("Number of agents"));
-            
-                ui.horizontal_top(|ui| {
-                    ui.label("Config file path: ");
-                    ui.add(eframe::egui::TextEdit::singleline(&mut self.config_file_path).hint_text("Path to config file"));
+                ui.separator();
+                ui.columns(3, |cols| {
+                    cols[0].label("Simulation Type: ");
+                    cols[1].radio_value(&mut self.is_static, false, "Dynamic Agents");
+                    cols[2].radio_value(&mut self.is_static, true, "Static Agents");    
                 });
 
-                ui.horizontal(|ui| {
-                    if ui.add(eframe::egui::Button::new("Start Simulation")).clicked() {
+                ui.separator();
+                ui.columns(2, |cols| {
+                    cols[0].label("Number of agents: ");
+                    cols[1].add(eframe::egui::DragValue::new(&mut self.num_agents).speed(1).clamp_range(0..=500));
+                });
+                
+                ui.separator();
+                ui.columns(2, |cols| {
+                    cols[0].label("Demand scale: ");
+                    cols[1].add(eframe::egui::DragValue::new(&mut self.demand_scale).speed(0.01).clamp_range(0..=1));    
+                });
+
+                ui.separator();
+                ui.columns(2, |cols| {
+                    cols[0].label("Config file path: ");
+                    cols[1].add(eframe::egui::TextEdit::singleline(&mut self.config_file_path).hint_text("Path to config file"));
+                });
+
+                ui.separator();
+                ui.columns(4, |cols| {
+                    if cols[3].add(eframe::egui::Button::new("Start Sim")).clicked() {
                         *self.setting_ref.borrow_mut() = Ok(SettingOverrides {
                             is_static: self.is_static,
                             num_agents: self.num_agents,
@@ -53,11 +69,12 @@ impl eframe::App for Onboarding {
                         frame.close();
                     }
 
-                    if ui.add(eframe::egui::Button::new("Cancel")).clicked() {
+                    if cols[2].add(eframe::egui::Button::new("Cancel")).clicked() {
                         // send shutdown. but also make it an error
                         *self.setting_ref.borrow_mut() = Err(());
                         frame.close();
                     }
+
                 });
             });    
         });
@@ -67,11 +84,13 @@ impl eframe::App for Onboarding {
 impl Onboarding {
     pub fn run(settings_overrides: Arc<RefCell<Result<SettingOverrides, ()>>>) {
         let mut options = eframe::NativeOptions::default();
-        options.initial_window_size = Some(eframe::egui::vec2(800.0, 600.0));
+        options.initial_window_size = Some(eframe::egui::vec2(450.0, 300.0));
+        options.centered = true;
+        options.resizable = false;
 
         // let settings_overrides = Arc::from(RefCell::new(Err(())));
 
-        eframe::run_native("Onboarding", options, 
+        eframe::run_native("ODBRS Onboarding", options, 
             Box::new(|_cc| Box::new(Onboarding::new(settings_overrides)))
         );
 

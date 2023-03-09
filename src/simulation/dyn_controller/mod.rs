@@ -16,14 +16,19 @@ pub mod waypoints;
 
 #[derive(Default)]
 pub struct DynamicController {
-    id: u8,
+    id: usize,
     pid: u32, 
     buses: Vec<Bus>,
     demands: VecDeque<Passenger>,
-    analytics: Option<Sender<AnalyticsPackage>>
+    analytics: Option<Sender<AnalyticsPackage>>,
+    demand_scale: f64,
 }
 
 impl DynamicController {
+
+    pub fn set_demand_scale(&mut self, scale: f64) {
+        self.demand_scale = scale;
+    }
 
     pub fn set_analytics(&mut self, tx: Option<Sender<AnalyticsPackage>>) {
         println!("[ANALYTICS] Set analytics channel to {:?}", tx.is_some());
@@ -169,7 +174,7 @@ impl Controller for DynamicController {
         self.buses.iter_mut().for_each(|b| b.move_self());
 
         // TODO: just for testing only do gen at 1/50 scale
-        let demand_queue = demand.generate_scaled_amount(1.0/50.0, &time, Ok(graph.clone()));
+        let demand_queue = demand.generate_scaled_amount(self.demand_scale, &time, Ok(graph.clone()));
         let mut demand_queue = demand_queue.into_iter().map(|d| {
             let passenger = demand_to_passenger(d, graph.clone(), self.pid);
             self.pid += 1;

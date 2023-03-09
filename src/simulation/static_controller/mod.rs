@@ -27,10 +27,12 @@ pub struct StaticController {
     passenger_pool: Vec<BusPassenger>,
     analytics: Option<Sender<AnalyticsPackage>>,
     passenger_id: u32,
+    demand_scale: f64,
 }
 
 impl Controller for StaticController {
     type Agent = StaticAgent;
+
 
     fn get_agents(&self) -> Vec<&Self::Agent> {
         self.buses.values().collect()
@@ -70,7 +72,7 @@ impl Controller for StaticController {
                 );
             });
 
-        let demand_queue = demand.generate_scaled_amount(1.0, &time, Err(self.network_data.clone()));
+        let demand_queue = demand.generate_scaled_amount(self.demand_scale, &time, Err(self.network_data.clone()));
         let demand_queue: VecDeque<_> = demand_queue
             .into_iter()
             .map(|d| {
@@ -122,6 +124,10 @@ impl Controller for StaticController {
 }
 
 impl StaticController {
+
+    pub fn set_demand_scale(&mut self, scale: f64) {
+        self.demand_scale = scale;
+    }
 
     pub fn set_analytics(&mut self, tx: Option<Sender<AnalyticsPackage>>) {
         println!("[ANALYTICS] Set analytics to {:?}", tx.is_some());

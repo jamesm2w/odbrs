@@ -126,7 +126,7 @@ pub struct Bus {
     
     pub graph: Arc<Graph>, // Reference to the graph this agent is operating on
 
-    pub agent_id: u8, // ID of this agent
+    pub agent_id: usize, // ID of this agent
     pub max_capacity: u8, // Maximum capacity of the agent/bus
     pub rem_capacity: u8, // Remaining capacity of the agent/bus
     
@@ -271,7 +271,7 @@ impl Bus {
     }
 
     // TODO: abstract out random initialisation to another function?
-    pub fn new(graph: Arc<Graph>, max_capacity: u8, id: u8, analytics: Option<Sender<AnalyticsPackage>>) -> Self {
+    pub fn new(graph: Arc<Graph>, max_capacity: u8, id: usize, analytics: Option<Sender<AnalyticsPackage>>) -> Self {
 
         let random_index = rand::thread_rng().gen_range(0..=graph.get_nodelist().len() - 1);
         let random_node = graph.get_nodelist().keys().nth(random_index).unwrap();

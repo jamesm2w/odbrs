@@ -112,13 +112,13 @@ impl Module for Simulation {
         println!("[ANALYTICS] Received analytics {}", self.analytics_tx.is_some());
 
         self.graph = parameters.graph;
-        self.speed = 100; // TODO: Config this?
+        self.speed = 100;
 
         if !self.static_only {
             self.dyn_controller.set_analytics(self.analytics_tx.clone());
+            self.dyn_controller.set_demand_scale(self.demand_scale);
 
             for _ in 0..self.dynamic_agent_count {
-                // TODO: Change this number -- config maybe?
                 self.dyn_controller.spawn_agent(self.graph.clone());
             }
         } else {
@@ -129,6 +129,7 @@ impl Module for Simulation {
             println!("Loaded network data in {:?}", timer.elapsed());
             self.static_controller
                 .set_network_data(self.network_data.clone());
+            self.static_controller.set_demand_scale(self.demand_scale);
             self.static_controller.set_analytics(self.analytics_tx.clone());
             self.static_controller.spawn_agent(self.graph.clone());
         }
@@ -217,7 +218,6 @@ impl Simulation {
         return;
     }
 
-    // TODO: Basically just add some logic that this is caled when the state has actually changed (to stop flooding the GUI thread)
     pub fn send_state(&self) {
         match self
             .gui_tx
