@@ -53,8 +53,7 @@ impl Module for Resources {
         };
 
         let data = fs::read(path)?;
-        let config_file: ConfigFile = toml::from_slice(data.as_slice())?;
-
+        let config_file: ConfigFile = toml::from_str(std::str::from_utf8(&data)?)?;
         let graph = match self.load_graph(&config_file) {
             Some(graph) => Ok(graph),
             None => Err("Error in loading graph"),

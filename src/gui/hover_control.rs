@@ -23,8 +23,8 @@ impl HoverControl {
 impl Control for HoverControl {
     fn view_control(&mut self, ui: &mut eframe::egui::Ui) {
 
-        self.last_pos = ui.input().pointer.hover_pos().unwrap_or(self.last_pos);
-
+        self.last_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or(self.last_pos);
+        
         self.mapped_pos = match self.graph.get_transform().read() {
             Ok(transform) => {
                 transform.screen_to_map(self.last_pos)

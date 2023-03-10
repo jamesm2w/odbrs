@@ -1,9 +1,11 @@
-use eframe::epaint::{pos2, CircleShape, PathShape, Pos2, Shape, TextShape, Vec2};
+use eframe::epaint::{pos2, CircleShape, PathShape, Pos2, Shape, TextShape, Vec2, vec2};
 
 use super::AdjacencyList;
 
 #[derive(Default, Debug)]
 pub struct Transform {
+    pub map_offset: Vec2,
+
     pub dragx: f32,
     pub dragy: f32,
     pub zoom: f32,
@@ -20,6 +22,7 @@ impl Transform {
         let bounding = super::minimal_bounding(adjlist);
 
         Transform {
+            map_offset: vec2(0.0, 0.0),
             dragx: 0.0,
             dragy: 0.0,
             zoom: 1.0,
@@ -29,6 +32,10 @@ impl Transform {
             top: bounding.2 as _,
             bottom: bounding.3 as _,
         }
+    }
+
+    pub fn set_map_offet(&mut self, map_offset: Pos2) {
+        self.map_offset = map_offset.to_vec2();
     }
 
     // Drag the graph around
@@ -56,12 +63,12 @@ impl Transform {
 
     // Convert a map coord in ERSG:27700 to a screen-space position
     pub fn map_to_screen(&self, x: f64, y: f64) -> Pos2 {
-        pos2(map_x_screen(&self, x as _), map_y_screen(&self, y as _))
+        pos2(map_x_screen(&self, x as _), map_y_screen(&self, y as _)) + self.map_offset
     }
 
     // Convert a scree-space position to the OS natl grid map
     pub fn screen_to_map(&self, pos: Pos2) -> (f64, f64) {
-        let Pos2 { x, y } = pos;
+        let Pos2 { x, y } = pos - self.map_offset;
 
         (
             ((((x / self.zoom) + self.dragx) / self.scale) + self.left) as f64,

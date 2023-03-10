@@ -1,10 +1,10 @@
 use std::{cell::RefCell, rc::Rc, sync::mpsc::Sender};
 
-use eframe::egui::{Ui, Slider};
+use eframe::{egui::{Ui, Slider, Context, Window, Frame}, epaint::{Color32, vec2}};
 
 use crate::simulation::{SimulationMessage, SimulationState};
 
-use super::{AppState, Control};
+use super::{AppState, Control, App};
 
 pub struct SimulationControl {
     pub app_state: Rc<RefCell<AppState>>,
@@ -72,4 +72,14 @@ impl Control for SimulationControl {
             }
         }
     }
+}
+
+pub fn render_control(app_state: &mut App, ctx: &Context, _frame: &mut eframe::Frame) {
+    Window::new("Simulation Controls").default_size(vec2(300.0, 500.0)).frame(Frame::none().fill(Color32::BLACK)).show(ctx, |ui| {
+        ui.label("Simulation Controls");
+        for control in app_state.controls.iter_mut() {
+            ui.separator();
+            control.view_control(ui);
+        }
+    });
 }

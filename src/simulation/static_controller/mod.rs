@@ -38,7 +38,7 @@ impl Controller for StaticController {
         self.buses.values().collect()
     }
 
-    fn spawn_agent(&mut self, graph: std::sync::Arc<crate::graph::Graph>) -> Option<&Self::Agent> {
+    fn spawn_agent(&mut self, _graph: std::sync::Arc<crate::graph::Graph>) -> Option<&Self::Agent> {
         None
     }
 
@@ -271,80 +271,80 @@ pub fn basic_route_finding(source_stop: u32, dest_stop: u32, source_pos: (f64, f
 
 // Full route finding for passenger
 // try to get to the destination stop exactly
-pub fn full_route_finding(source: (f32, f32), dest: (f32, f32), network_data: Arc<NetworkData>, tick: DateTime<Utc>) -> VecDeque<Control> {
-    let (source_bus_stop, source_dist) =
-        closest_stop_to_point((source.0 as f64, source.1 as f64), network_data.clone());
+// pub fn full_route_finding(source: (f32, f32), dest: (f32, f32), network_data: Arc<NetworkData>, tick: DateTime<Utc>) -> VecDeque<Control> {
+//     let (source_bus_stop, source_dist) =
+//         closest_stop_to_point((source.0 as f64, source.1 as f64), network_data.clone());
 
-    let (destination_bus_stop, dest_dist) =
-        closest_stop_to_point((dest.0 as f64, dest.1 as f64), network_data.clone());
-    let mut control = VecDeque::new();
+//     let (destination_bus_stop, dest_dist) =
+//         closest_stop_to_point((dest.0 as f64, dest.1 as f64), network_data.clone());
+//     let mut control = VecDeque::new();
 
-    let HUMAN_WALKING_SPEED = 1.4; // human walking speed in m/s
-    let MAX_DEPTH = 3; // max depth of search for a trip to the destination. If we can't find it within 3 trips, we just walk/reject
+//     let HUMAN_WALKING_SPEED = 1.4; // human walking speed in m/s
+//     let MAX_DEPTH = 3; // max depth of search for a trip to the destination. If we can't find it within 3 trips, we just walk/reject
 
-    // push walking control to the source bus stop to start
-    control.push_back(Control::walk_to_stop(source_bus_stop, (source.0 as _, source.1 as _)));
+//     // push walking control to the source bus stop to start
+//     control.push_back(Control::walk_to_stop(source_bus_stop, (source.0 as _, source.1 as _)));
 
-    let mut stop_neighbourhood = routes::stop_neighbourhood_pos( (source.0 as f64, source.1 as f64) , HUMAN_WALKING_SPEED * 30.0 * 60.0, network_data.clone());
-    let end_neighbourhood = routes::stop_neighbourhood_pos( (dest.0 as f64, dest.1 as f64) , HUMAN_WALKING_SPEED * 30.0 * 60.0, network_data.clone());
+//     let mut stop_neighbourhood = routes::stop_neighbourhood_pos( (source.0 as f64, source.1 as f64) , HUMAN_WALKING_SPEED * 30.0 * 60.0, network_data.clone());
+//     let end_neighbourhood = routes::stop_neighbourhood_pos( (dest.0 as f64, dest.1 as f64) , HUMAN_WALKING_SPEED * 30.0 * 60.0, network_data.clone());
 
-    let mut current_stop = source_bus_stop;
-    loop {
-        if control.len() > MAX_DEPTH * 2 {
-            // Reject the trip if we can't find a trip to the destination within 3 trips
-            return control;
-        }
+//     let mut current_stop = source_bus_stop;
+//     loop {
+//         if control.len() > MAX_DEPTH * 2 {
+//             // Reject the trip if we can't find a trip to the destination within 3 trips
+//             return control;
+//         }
 
-        // find a possible next trip
-        let trip = stop_neighbourhood.iter().map(|id| {
-            network_data.trips_from_stop.get(id).expect("Stop was not a stop").iter().map(|tid| {
-                let trip = network_data.trips.get(tid).expect("Trip ID was not a trip");
-                let stop_index = trip.stops.iter().position(|stop| *stop == *id).expect("Stop was not in trip");
-                let stop_time = trip.timings[stop_index].0;
-                (*id, tid, trip, stop_time)
-            }).filter(|(_, _, _, stop_time)| {
-                // filter for buses departing in the next 20 minutes
-                stop_time >= &tick.time() && stop_time < &(tick + Duration::minutes(20)).time()
-            }).map(|(sid, tid, trip, stop_time)| {
-                // find the closest stop on the trip to the destination (and the arrival time)
-                let closest_stop_info = trip.stops.iter().zip(trip.timings.iter()).filter(|(other_id, other_time)| {
-                    other_time.0 > stop_time && *id != **other_id
-                }).map(|(stop, timings)| {
-                    let stop_data = network_data.stops.get(stop).expect("Stop was not a stop");
-                    let dist = distance(stop_data.position(), (dest.0 as f64, dest.1 as f64));
-                    (stop, timings.0, dist)
-                // now find the closest stop to the destination
-                }).min_by(|(_, _, dist_a), (_, _, dist_b)| dist_a.total_cmp(dist_b))
-                .expect("No stops on trip were closer to destination than current stop");
-                (sid, tid, trip, stop_time, closest_stop_info.0, closest_stop_info.1, closest_stop_info.2)
-            })
-        }).flatten().min_by(|first, second| {
-            // find the trip which gets the passenger closest to the destination
-            let min_dist = first.6.min(second.6); // Minimum distance to the destination out of both trips
-            let timing_first = first.5 + Duration::seconds(((first.6 - min_dist) / HUMAN_WALKING_SPEED) as i64); 
-            let timing_second = second.5 + Duration::seconds(((second.6 - min_dist) / HUMAN_WALKING_SPEED) as i64); 
-            timing_first.cmp(&timing_second)
-        });
+//         // find a possible next trip
+//         let trip = stop_neighbourhood.iter().map(|id| {
+//             network_data.trips_from_stop.get(id).expect("Stop was not a stop").iter().map(|tid| {
+//                 let trip = network_data.trips.get(tid).expect("Trip ID was not a trip");
+//                 let stop_index = trip.stops.iter().position(|stop| *stop == *id).expect("Stop was not in trip");
+//                 let stop_time = trip.timings[stop_index].0;
+//                 (*id, tid, trip, stop_time)
+//             }).filter(|(_, _, _, stop_time)| {
+//                 // filter for buses departing in the next 20 minutes
+//                 stop_time >= &tick.time() && stop_time < &(tick + Duration::minutes(20)).time()
+//             }).map(|(sid, tid, trip, stop_time)| {
+//                 // find the closest stop on the trip to the destination (and the arrival time)
+//                 let closest_stop_info = trip.stops.iter().zip(trip.timings.iter()).filter(|(other_id, other_time)| {
+//                     other_time.0 > stop_time && *id != **other_id
+//                 }).map(|(stop, timings)| {
+//                     let stop_data = network_data.stops.get(stop).expect("Stop was not a stop");
+//                     let dist = distance(stop_data.position(), (dest.0 as f64, dest.1 as f64));
+//                     (stop, timings.0, dist)
+//                 // now find the closest stop to the destination
+//                 }).min_by(|(_, _, dist_a), (_, _, dist_b)| dist_a.total_cmp(dist_b))
+//                 .expect("No stops on trip were closer to destination than current stop");
+//                 (sid, tid, trip, stop_time, closest_stop_info.0, closest_stop_info.1, closest_stop_info.2)
+//             })
+//         }).flatten().min_by(|first, second| {
+//             // find the trip which gets the passenger closest to the destination
+//             let min_dist = first.6.min(second.6); // Minimum distance to the destination out of both trips
+//             let timing_first = first.5 + Duration::seconds(((first.6 - min_dist) / HUMAN_WALKING_SPEED) as i64); 
+//             let timing_second = second.5 + Duration::seconds(((second.6 - min_dist) / HUMAN_WALKING_SPEED) as i64); 
+//             timing_first.cmp(&timing_second)
+//         });
 
-        match trip {
-            Some(trip_data) => {
-                if current_stop != trip_data.0 { // if the start stop is not the current stop, we need to walk to it
-                    control.push_back(Control::take_bus(0, trip_data.0, current_stop));
-                }
-                control.push_back(Control::take_bus(*trip_data.1, trip_data.0, *trip_data.4));
-                current_stop = *trip_data.4;
-                stop_neighbourhood = routes::stop_neighbourhood(current_stop, HUMAN_WALKING_SPEED * 30.0 * 60.0, network_data.clone());
-            },
-            None => {
-                // if we can't find a trip to the destination, we just walk
-                control.push_back(Control::take_bus(0, destination_bus_stop, current_stop));
-                break;
-            }
-        }
-    }
+//         match trip {
+//             Some(trip_data) => {
+//                 if current_stop != trip_data.0 { // if the start stop is not the current stop, we need to walk to it
+//                     control.push_back(Control::take_bus(0, trip_data.0, current_stop));
+//                 }
+//                 control.push_back(Control::take_bus(*trip_data.1, trip_data.0, *trip_data.4));
+//                 current_stop = *trip_data.4;
+//                 stop_neighbourhood = routes::stop_neighbourhood(current_stop, HUMAN_WALKING_SPEED * 30.0 * 60.0, network_data.clone());
+//             },
+//             None => {
+//                 // if we can't find a trip to the destination, we just walk
+//                 control.push_back(Control::take_bus(0, destination_bus_stop, current_stop));
+//                 break;
+//             }
+//         }
+//     }
 
-    control
-}
+//     control
+// }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Control {

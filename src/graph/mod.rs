@@ -1,7 +1,7 @@
 use std::{sync::RwLock, collections::HashMap};
 
 use eframe::{
-    egui::{Id, Sense, Ui},
+    egui::{Id, Sense, Ui, Response, Painter, InputState},
     epaint::{Shape, Stroke},
 };
 
@@ -100,22 +100,21 @@ impl Graph {
         &self.transform
     }
 
-    pub fn view(&self, ui: &mut Ui) {
-        let drag_delta = ui
-            .interact(ui.clip_rect(), Id::new("interact_rect"), Sense::drag())
-            .drag_delta();
-        let scroll_delta = ui.input().zoom_delta(); //* 50.0; //ui.input().scroll_delta.y;
+    pub fn view(&self, response: &mut Response, painter: &mut Painter, ui: &mut Ui) {
+        let drag_delta = response.drag_delta();
+        let scroll_delta = ui.input(|i| i.zoom_delta()); //* 50.0; //ui.input().scroll_delta.y;
 
         match self.transform.try_write() {
             Ok(mut transform) => {
+                // transform.set_map_offet(ui.next_widget_position());
                 transform.drag(drag_delta);
                 transform.zoom(scroll_delta);
                 transform.scale(ui.available_width());
             }
             Err(err) => println!("{:?}", err),
         }
-
-        ui.painter().extend(self.create_paint_shapes())
+        
+        painter.extend(self.create_paint_shapes())
     }
 
     pub fn create_paint_shapes(&self) -> Vec<Shape> {
