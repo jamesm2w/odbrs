@@ -27,6 +27,7 @@ mod hover_control;
 mod simulation_control;
 pub mod onboarding;
 mod map;
+pub mod analytics;
 
 /// Gui contains the GUI for the app obviously
 /// - Function for view of the app

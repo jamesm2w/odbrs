@@ -1,6 +1,8 @@
 use std::{sync::mpsc::{Sender, Receiver}, collections::HashMap, io::Write};
 
-use crate::Module;
+use eframe::NativeOptions;
+
+use crate::{Module, gui::analytics::{State, create_distributions}};
 
 pub enum AnalyticsPackage {
     None,
@@ -161,8 +163,8 @@ impl Analytics {
         println!("Average Tick Time: {}", self.avg_tick_time);
         println!("Analytics Sizes: \nPassengers with: \n\tWaits: {} \n\tTravel: {} \n\tWalking: {} \nVehicles with: \n\tTravel: {} \n\tPassengers: {}", self.passenger_waits.len(), self.passenger_travel.len(), self.passenger_walking.len(), self.vehicle_travel.len(), self.vehicle_passengers.len());
 
-        let output_path = format!(r#"data/output/{}-passenger-output.csv"#, chrono::Local::now().format("%Y-%m-%d-%H-%M-%S"));
-        let mut passenger_output_file = std::fs::File::create(output_path).unwrap();
+        let output_path_passenger = format!(r#"data/output/{}-passenger-output.csv"#, chrono::Local::now().format("%Y-%m-%d-%H-%M-%S"));
+        let mut passenger_output_file = std::fs::File::create(&output_path_passenger).unwrap();
         writeln!(&mut passenger_output_file, "Passenger ID,Waiting Ticks,Travel Ticks,Start Walking Ticks,End Walking Ticks").unwrap();
         for (id, travel) in &self.passenger_travel {
             let wait = self.passenger_waits.get(id).unwrap_or(&0);
@@ -171,11 +173,19 @@ impl Analytics {
         }
 
         let output_path = format!(r#"data/output/{}-vehicle-output.csv"#, chrono::Local::now().format("%Y-%m-%d-%H-%M-%S"));
-        let mut vehicle_output_file = std::fs::File::create(output_path).unwrap();
+        let mut vehicle_output_file = std::fs::File::create(&output_path).unwrap();
         writeln!(vehicle_output_file, "Vehicle ID,Travel Ticks,Passengers Picked Up,Passengers Dropped Off").unwrap();
         for (id, travel) in &self.vehicle_travel {
             let (pickup, dropoff) = self.vehicle_passengers.get(id).unwrap_or(&(0,0));
             writeln!(vehicle_output_file, "{},{},{},{}", id, travel, pickup, dropoff).unwrap();
+        }
+
+        let mut state = State::default();
+        create_distributions(&mut state, vec![output_path, output_path_passenger]);
+        
+        match eframe::run_native("ODBRS_Analytics", NativeOptions::default(), Box::new(|_cc| Box::new(state))) {
+            Ok(()) => (),
+            Err(err) => panic!("Error: {:?}", err),
         }
     }
 }
