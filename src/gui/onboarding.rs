@@ -1,13 +1,16 @@
 use std::{sync::Arc, cell::RefCell};
 
-use eframe::{egui::{CentralPanel, Frame, style::Margin}, epaint::Color32};
+use chrono::NaiveTime;
+use eframe::{egui::{CentralPanel, Frame, style::Margin, DragValue}, epaint::Color32};
 
 pub struct Onboarding {
     setting_ref: Arc<RefCell<Result<SettingOverrides, ()>>>,
     is_static: bool, 
     num_agents: usize,
     config_file_path: String,
-    demand_scale: f64
+    demand_scale: f64,
+    start_time: Time,
+    end_time: Time,
 }
 
 impl Onboarding {
@@ -15,8 +18,10 @@ impl Onboarding {
         Self {
             setting_ref,
             is_static: false,
-            num_agents: 50,
-            demand_scale: 1.0,
+            num_agents: 100,
+            demand_scale: 0.20,
+            start_time: Time { hour: 6, minute: 45, second: 0},
+            end_time: Time { hour: 19, minute: 45, second: 0 },
             config_file_path: String::from("data/config.toml")
         }
     }
@@ -39,10 +44,33 @@ impl eframe::App for Onboarding {
                     cols[2].radio_value(&mut self.is_static, true, "Static Agents");    
                 });
 
+                if !self.is_static {
+                    ui.separator();
+                    ui.columns(2, |cols| {
+                        cols[0].label("Number of agents: ");
+                        cols[1].add(eframe::egui::DragValue::new(&mut self.num_agents).speed(1).clamp_range(0..=500));
+                    });
+                }
+
                 ui.separator();
                 ui.columns(2, |cols| {
-                    cols[0].label("Number of agents: ");
-                    cols[1].add(eframe::egui::DragValue::new(&mut self.num_agents).speed(1).clamp_range(0..=500));
+                    cols[0].label("Start Time:");
+                    cols[1].columns(3, |ui| {
+                        ui[0].add(DragValue::new(&mut self.start_time.hour).speed(1).clamp_range(0..=24).suffix("h"));
+                        ui[1].add(DragValue::new(&mut self.start_time.minute).speed(1).clamp_range(0..=60).suffix("m"));
+                        ui[2].add(DragValue::new(&mut self.start_time.second).speed(1).clamp_range(0..=60).suffix("s"));
+                        
+                    })
+                });
+
+                ui.columns(2, |cols| {
+                    cols[0].label("End Time:");
+                    cols[1].columns(3, |ui| {
+                        ui[0].add(DragValue::new(&mut self.end_time.hour).speed(1).clamp_range(0..=24).suffix("h"));
+                        ui[1].add(DragValue::new(&mut self.end_time.minute).speed(1).clamp_range(0..=60).suffix("m"));
+                        ui[2].add(DragValue::new(&mut self.end_time.second).speed(1).clamp_range(0..=60).suffix("s"));
+                        
+                    })
                 });
                 
                 ui.separator();
@@ -64,6 +92,8 @@ impl eframe::App for Onboarding {
                             is_static: self.is_static,
                             num_agents: self.num_agents,
                             demand_scale: self.demand_scale,
+                            start_time: NaiveTime::from_hms(self.start_time.hour, self.start_time.minute, self.start_time.second),
+                            end_time: NaiveTime::from_hms(self.end_time.hour, self.end_time.minute, self.end_time.second),
                             config_file_path: self.config_file_path.clone()
                         });
                         frame.close();
@@ -88,15 +118,20 @@ impl Onboarding {
         options.centered = true;
         options.resizable = false;
 
-        // let settings_overrides = Arc::from(RefCell::new(Err(())));
-
-        eframe::run_native("ODBRS Onboarding", options, 
+        match eframe::run_native("ODBRS Onboarding", options, 
             Box::new(|_cc| Box::new(Onboarding::new(settings_overrides)))
-        );
-
-        // TODO: mutate some state somewhere to record result of application running
-        // settings_overrides
+        ) {
+            Ok(_) => (),
+            Err(e) => {
+                panic!("Error: {}", e);
+            }
+        };
     }
+}
+struct Time {
+    hour: u32,
+    minute: u32,
+    second: u32
 }
 
 #[derive(Default, Clone)]
@@ -105,4 +140,6 @@ pub struct SettingOverrides {
     pub num_agents: usize, // number of dynamic agents to use
     pub demand_scale: f64, // scale factor for demand
     pub config_file_path: String, // path to the config file for the data
+    pub start_time: NaiveTime,
+    pub end_time: NaiveTime
 }

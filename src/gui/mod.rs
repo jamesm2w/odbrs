@@ -9,8 +9,8 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use eframe::{
-    egui::{CentralPanel, SidePanel, Ui, Id, TopBottomPanel, Frame, Style, Visuals},
-    epaint::{vec2, Color32, Shape, Stroke, Rounding},
+    egui::{CentralPanel, Ui, TopBottomPanel, Frame},
+    epaint::{vec2, Shape},
     NativeOptions,
 };
 use serde::Deserialize;
@@ -26,7 +26,6 @@ use self::{hover_control::HoverControl, simulation_control::{SimulationControl, 
 mod hover_control;
 mod simulation_control;
 pub mod onboarding;
-pub mod overlord;
 mod map;
 
 /// Gui contains the GUI for the app obviously
@@ -122,10 +121,10 @@ pub enum AppMessage {
 }
 
 impl App {
-    pub(crate) fn start(self) {
+    pub(crate) fn start(self) -> Result<(), eframe::Error> {
         let mut options = NativeOptions::default();
         options.initial_window_size = Some(vec2(1920.0, 1080.0));
-        eframe::run_native("odbrs", options, Box::new(|_cc| Box::new(self)));
+        eframe::run_native("odbrs", options, Box::new(|_cc| Box::new(self)))
     }
 
     fn handle_message(&mut self, msg: AppMessage) {
@@ -169,16 +168,15 @@ impl eframe::App for App {
         TopBottomPanel::top("top_menu").show(ctx, |ui| {
             ui.horizontal_centered(|ui| {
                 ui.label("On Demand Bus Routing Simulator");
-                ui.button("Github Source");
             });
         });
 
-        CentralPanel::default().frame(Frame::central_panel(&ctx.style())).show(ctx, |ui| {
+        CentralPanel::default().frame(Frame::central_panel(&ctx.style())).show(ctx, |_| {
 
         });
-
-        render_map(self, ctx, _frame);
+        
         render_control(self, ctx, _frame);
+        render_map(self, ctx, _frame);
 
         if self.state.borrow().sim_state.1 == SimulationState::Running {
             ctx.request_repaint();

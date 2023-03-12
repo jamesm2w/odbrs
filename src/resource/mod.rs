@@ -64,6 +64,8 @@ impl Module for Resources {
         sim_cfg.static_only = parameters.is_static;
         sim_cfg.dyn_agent_count = parameters.num_agents;
         sim_cfg.demand_scale = parameters.demand_scale;
+        sim_cfg.start_time = Some(parameters.start_time);
+        sim_cfg.end_time = Some(parameters.end_time);
 
         let gui_cfg = config_file.app;
         let gph_cfg = config_file.graph;

@@ -125,12 +125,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("Simulation Thread Ended");
     });
 
-    // let analytics_handle = thread::spawn(move || {
-        
-    // });
-
     println!("GUI Thread Started");
-    odbrs.gui.start();
+    odbrs.gui.start()?;
     println!("GUI Thread Ended");
 
     handle.join().expect("Couldn't join the simulation thread");

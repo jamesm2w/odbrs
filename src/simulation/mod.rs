@@ -49,6 +49,7 @@ pub struct Simulation {
     analytics_tx: Option<Sender<AnalyticsPackage>>,
 
     i: DateTime<Utc>,
+    end_time: NaiveTime,
 
     state: SimulationState,
     speed: u64, // Tick speed
@@ -101,10 +102,24 @@ impl Module for Simulation {
         self.dynamic_agent_count = config.dyn_agent_count;
         self.demand_scale = config.demand_scale;
 
-        self.i = DateTime::from_utc(
-            NaiveDateTime::new(Utc::now().date_naive(), NaiveTime::from_hms(5, 0, 0)),
-            Utc,
-        );
+        if config.start_time.is_some() {
+            self.i = DateTime::from_utc(
+                NaiveDateTime::new(Utc::now().date_naive(), config.start_time.unwrap()),
+                Utc,
+            );
+        } else {
+            self.i = DateTime::from_utc(
+                NaiveDateTime::new(Utc::now().date_naive(), NaiveTime::from_hms(5, 0, 0)),
+                Utc,
+            );
+        }
+
+        if config.end_time.is_some() {
+            self.end_time = config.end_time.unwrap();
+        } else {
+            self.end_time = NaiveTime::from_hms(23, 0, 0);
+        }
+
         self.rx = Some(parameters.rx);
         self.gui_tx = Some(parameters.gui_tx);
 
@@ -167,6 +182,8 @@ pub struct SimulationConfig {
     pub static_only: bool, // true = static only, false = dynamic only
     pub dyn_agent_count: usize,
     pub demand_scale: f64,
+    pub start_time: Option<NaiveTime>,
+    pub end_time: Option<NaiveTime>
 }
 
 pub struct SimulationParameters {
@@ -203,8 +220,8 @@ impl Simulation {
                         thread::sleep(Duration::from_millis(self.speed));
                     }
 
-                    if self.i.time() > NaiveTime::from_hms(23, 0, 0) {
-                        println!("[SIMULATION] Stopping at 23:00:00");
+                    if self.i.time() > self.end_time {
+                        println!("[SIMULATION] Stopping at end time");
                         self.state = SimulationState::Stopped;
                     }
                 }

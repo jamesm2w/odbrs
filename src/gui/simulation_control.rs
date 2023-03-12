@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc, sync::mpsc::Sender};
 
-use eframe::{egui::{Ui, Slider, Context, Window, Frame}, epaint::{Color32, vec2}};
+use eframe::{egui::{Ui, Slider, Context, Window}, epaint::{vec2}};
 
 use crate::simulation::{SimulationMessage, SimulationState};
 
@@ -29,9 +29,10 @@ impl Control for SimulationControl {
         ));
 
         ui.horizontal(|ui| {
-            if self.state != ControlState::Stopped {
-                if self.state == ControlState::Paused {
-                    if ui.button("Start").clicked() {
+            match self.state {
+                ControlState::Stopped => {},
+                ControlState::Paused => ui.columns(2, |ui| {
+                    if ui[0].button("Start").clicked() {
                         self.state = ControlState::Running;
                         match self.sim_tx
                             .send(SimulationMessage::ChangeState(SimulationState::Running)) {
@@ -39,10 +40,17 @@ impl Control for SimulationControl {
                                 Err(err) => eprintln!("Send Error {:?}", err)
                             }
                     }
-                }
-
-                if self.state == ControlState::Running {
-                    if ui.button("Pause").clicked() {
+                    if ui[1].button("Stop").clicked() {
+                        self.state = ControlState::Stopped;
+                        match self.sim_tx
+                            .send(SimulationMessage::ChangeState(SimulationState::Stopped)) {
+                                Ok(()) => (),
+                                Err(err) => eprintln!("Send Error {:?}", err)
+                            };
+                    }
+                }),
+                ControlState::Running => ui.columns(2, |ui| {
+                    if ui[0].button("Pause").clicked() {
                         self.state = ControlState::Paused;
                         match self.sim_tx
                             .send(SimulationMessage::ChangeState(SimulationState::Paused)) {
@@ -50,18 +58,19 @@ impl Control for SimulationControl {
                                 Err(err) => eprintln!("Send Error {:?}", err),
                             }
                     }
-                }
-
-                if ui.button("Stop").clicked() {
-                    self.state = ControlState::Stopped;
-                    match self.sim_tx
-                        .send(SimulationMessage::ChangeState(SimulationState::Stopped)) {
-                            Ok(()) => (),
-                            Err(err) => eprintln!("Send Error {:?}", err)
-                        };
-                }
+                    if ui[1].button("Stop").clicked() {
+                        self.state = ControlState::Stopped;
+                        match self.sim_tx
+                            .send(SimulationMessage::ChangeState(SimulationState::Stopped)) {
+                                Ok(()) => (),
+                                Err(err) => eprintln!("Send Error {:?}", err)
+                            };
+                    }
+                })
             }
         });
+
+        ui.separator();
 
         let slider = Slider::new(&mut self.speed, 1..=10000).text("Tick Speed");
         let resp = ui.add(slider);
@@ -75,10 +84,10 @@ impl Control for SimulationControl {
 }
 
 pub fn render_control(app_state: &mut App, ctx: &Context, _frame: &mut eframe::Frame) {
-    Window::new("Simulation Controls").default_size(vec2(300.0, 500.0)).frame(Frame::none().fill(Color32::BLACK)).show(ctx, |ui| {
-        ui.label("Simulation Controls");
-        for control in app_state.controls.iter_mut() {
-            ui.separator();
+    Window::new("Simulation Controls").default_size(vec2(300.0, 500.0)).show(ctx, |ui| {
+        
+        for (i, control) in app_state.controls.iter_mut().enumerate() {
+            if i != 0 { ui.separator(); }
             control.view_control(ui);
         }
     });

@@ -332,7 +332,7 @@ impl Bus {
     pub fn constructive(&mut self, passenger: Passenger) {
         self.add_passenger_to_assignment(passenger);
 
-        println!("Constructive");
+        // println!("Constructive");
         println!("\tBus {} has {} passengers", self.agent_id, self.passengers.len());
         // println!("\tAssignment: {:?}", self.assignment);
 
@@ -344,7 +344,7 @@ impl Bus {
         );
         self.path_waypoints = path;
         
-        println!("Waypoint Path: {:?}", self.path_waypoints);
+        // println!("Waypoint Path: {:?}", self.path_waypoints);
 
         // Create the full path between waypoints
         self.create_path();
@@ -374,7 +374,7 @@ impl Bus {
             
             for passenger in passengers.iter() {
                 if !self.passengers.contains(passenger) { 
-                    if rng.gen_bool(0.5) {
+                    if rng.gen_bool(0.1) {
                         to_remove.push(passenger.clone());
                     }
                 }
@@ -474,7 +474,7 @@ impl Bus {
                     //     return; // We are at the final destination
                     // }
                     match self.graph.get_adjacency()[&node].iter().find(|edge| {
-                        let edge_data = &self.graph.get_edgelist()[edge];
+                        let edge_data = &self.graph.get_edgelist()[*edge];
                         edge_data.start_id == next_node || edge_data.end_id == next_node
                     }) {
                         Some(&edge) => edge,
@@ -536,7 +536,7 @@ impl Bus {
                     Some(next_node) => {
                         // Find edge which connects current node to the next node in the path
                         let edge_id = self.graph.get_adjacency()[&current_node].iter().find(|e| {
-                            let edge = &self.graph.get_edgelist()[e];
+                            let edge = &self.graph.get_edgelist()[*e];
                             edge.start_id == next_node || edge.end_id == next_node
                         }).unwrap();
 

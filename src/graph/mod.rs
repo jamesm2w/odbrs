@@ -1,7 +1,7 @@
 use std::{sync::RwLock, collections::HashMap};
 
 use eframe::{
-    egui::{Id, Sense, Ui, Response, Painter, InputState},
+    egui::{Ui, Response, Painter},
     epaint::{Shape, Stroke},
 };
 
@@ -106,7 +106,7 @@ impl Graph {
 
         match self.transform.try_write() {
             Ok(mut transform) => {
-                // transform.set_map_offet(ui.next_widget_position());
+                transform.set_map_offet(ui.max_rect().min);
                 transform.drag(drag_delta);
                 transform.zoom(scroll_delta);
                 transform.scale(ui.available_width());

@@ -3,7 +3,11 @@ use eframe::{egui::{Context, Window, Frame, Sense}, epaint::{vec2, Shape, Stroke
 use super::App;
 
 pub fn render_map(app_state: &mut App, ctx: &Context, _frame: &mut eframe::Frame) {
-    Window::new("Simulation Map").default_size(vec2(800.0, 600.0)).frame(Frame::none().fill(Color32::DARK_GRAY)).show(ctx, |ui| {
+    Window::new("Simulation Map").default_size(vec2(800.0, 600.0))
+        .frame(Frame::window(&ctx.style())
+            .fill(Color32::GRAY)
+        )
+        .show(ctx, |ui| {
         
         let (mut response, mut painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());
         
