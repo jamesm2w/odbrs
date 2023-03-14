@@ -47,8 +47,13 @@ pub fn show_analytics(state: &mut State, ctx: &Context, _frame: &mut eframe::Fra
             ui.heading(format!("Distribution of {}", name));
             ui.label(format!("Min: {} Max: {} IQR: {} Median: {} Mean: {} StDev: {}", min, max, iqr, _med, mean, stdev));
             
+            // This sometimes returns an inf (or usize::MAX) probably should handle that!
             let bar_count = (range as f64 / h).ceil() as usize; // bar count
-            
+            if bar_count == usize::MAX {
+                ui.label("Error Displaying Distribution Chart");
+                return;
+            }
+
             let bars = BarChart::new((0..bar_count).map(|i| {
                 let position = min as f64 + (i as f64 * h);
                 let next_position = min as f64 + ((i + 1) as f64 * h);
