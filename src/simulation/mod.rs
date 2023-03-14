@@ -102,6 +102,8 @@ impl Module for Simulation {
         self.dynamic_agent_count = config.dyn_agent_count;
         self.demand_scale = config.demand_scale;
 
+        println!("[Simulation] Setting Overrides Recieved: {:?}", config);
+
         if config.start_time.is_some() {
             self.i = DateTime::from_utc(
                 NaiveDateTime::new(Utc::now().date_naive(), config.start_time.unwrap()),
@@ -177,7 +179,7 @@ pub enum SimulationMessage {
     ChangeSpeed(u64), // Change the simulation tick speed. ms value.
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Default, Deserialize, Debug)]
 pub struct SimulationConfig {
     pub static_only: bool, // true = static only, false = dynamic only
     pub dyn_agent_count: usize,

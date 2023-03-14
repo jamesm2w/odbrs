@@ -29,20 +29,22 @@ pub fn show_analytics(state: &mut State, ctx: &Context, _frame: &mut eframe::Fra
     CentralPanel::default().show(ctx, |ui| {
         ui.horizontal_wrapped(|ui| {
             for (i, (name, _)) in state.distributions.iter().enumerate() {
-                if ui.small_button(format!("Dist {}", name)).clicked() {
+                if ui.small_button(format!("{}", name)).clicked() {
                     state.selected_distribution = Some(i);
                 }
             }    
         });
 
         if let Some(selected_distribution) = state.selected_distribution {
-            let dist = &state.distributions.get(selected_distribution).unwrap().1;
+            let (name, dist) = &state.distributions.get(selected_distribution).unwrap();
+            
             let (min, q1, _med, q3, max) = calculate_stats(&dist).unwrap();
             let (mean, stdev) = calculate_mean_and_stdev(&dist).unwrap();
             let iqr = q3 - q1;
             let range = max - min;
             let h = freedman_diaconis(iqr as f64, dist.len()); // bar width
 
+            ui.heading(format!("Distribution of {}", name));
             ui.label(format!("Min: {} Max: {} IQR: {} Median: {} Mean: {} StDev: {}", min, max, iqr, _med, mean, stdev));
             
             let bar_count = (range as f64 / h).ceil() as usize; // bar count

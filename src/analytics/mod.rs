@@ -1,4 +1,4 @@
-use std::{sync::mpsc::{Sender, Receiver}, collections::HashMap, io::Write};
+use std::{sync::mpsc::{Sender, Receiver}, collections::HashMap, io::Write, fs};
 
 use eframe::NativeOptions;
 
@@ -32,7 +32,7 @@ pub enum PassengerAnalyticsEvent {
 impl PassengerAnalyticsEvent {
     fn handle(&self, analytics: &mut Analytics) {
         match self {
-            PassengerAnalyticsEvent::WaitingTick { id, waiting_pos } => {
+            PassengerAnalyticsEvent::WaitingTick { id, .. } => {
                 // println!("Analytics: Passenger {} is waiting at {:?}", id, waiting_pos);
                 analytics.passenger_waits.entry(*id).and_modify(|e| *e += 1).or_insert(1);
             },
@@ -59,15 +59,15 @@ pub enum VehicleAnalyticsEvent {
 impl VehicleAnalyticsEvent {
     fn handle(&self, analytics: &mut Analytics) {
         match self {
-            VehicleAnalyticsEvent::MovementTick { id, pos } => {
+            VehicleAnalyticsEvent::MovementTick { id, .. } => {
                 // println!("Analytics: Vehicle {} is at {:?}", id, pos);
                 analytics.vehicle_travel.entry(*id).and_modify(|e| *e += 1).or_insert(1);
             },
-            VehicleAnalyticsEvent::PassengerPickup { id, passenger_id } => {
+            VehicleAnalyticsEvent::PassengerPickup { id, .. } => {
                 // println!("Analytics: Vehicle {} picked up passenger {}", id, passenger_id);
                 analytics.vehicle_passengers.entry(*id).and_modify(|e| e.0 += 1).or_insert((1, 0));
             },
-            VehicleAnalyticsEvent::PassengerDropoff { id, passenger_id } => {
+            VehicleAnalyticsEvent::PassengerDropoff { id, .. } => {
                 // println!("Analytics: Vehicle {} dropped off passenger {}", id, passenger_id);
                 analytics.vehicle_passengers.entry(*id).and_modify(|e| e.1 += 1).or_insert((0, 1));
             }
@@ -82,7 +82,7 @@ pub enum SimulationAnalyticsEvent {
 impl SimulationAnalyticsEvent {
     fn handle(&self, analytics: &mut Analytics) {
         match self {
-            SimulationAnalyticsEvent::TickTime { tick, time } => {
+            SimulationAnalyticsEvent::TickTime { time, .. } => {
                 // println!("Analytics: Tick {} took {} seconds", tick, time);
                 analytics.tick_times.push(*time);
                 analytics.avg_tick_time = analytics.tick_times.iter().sum::<f64>() / analytics.tick_times.len() as f64;
@@ -179,6 +179,9 @@ impl Analytics {
             let (pickup, dropoff) = self.vehicle_passengers.get(id).unwrap_or(&(0,0));
             writeln!(vehicle_output_file, "{},{},{},{}", id, travel, pickup, dropoff).unwrap();
         }
+
+        let tick_output_path = String::from(r#"data/output/simulation-last-output.csv"#);
+        fs::write(&tick_output_path, "ticktime\n".to_owned() + &self.tick_times.iter().map(|t| format!("{}\n", t)).collect::<String>()).unwrap();
 
         let mut state = State::default();
         create_distributions(&mut state, vec![output_path, output_path_passenger]);

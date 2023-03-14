@@ -36,8 +36,8 @@ impl DynamicController {
     }
 
     // Construct a new/partial solution -- try assignments and see which minimises
-    pub fn constructive(&mut self, graph: Arc<Graph>) {
-        println!("[LNS] Run Constructive Heuristic");
+    pub fn constructive(&mut self, _graph: Arc<Graph>) {
+        println!("\t[LNS/Constructive] Run Constructive Heuristic");
         // All passengers in the demand queue are not assigned so shoud be generated
         // TODO: maybe change this to waiting or something based on where passenger is
         self.demands.iter_mut().for_each(|p| {
@@ -60,20 +60,22 @@ impl DynamicController {
         //     preform best insertion
 
         // while demands && a bus can have insertions
-        println!("[LNS] Demand size: {}", self.demands.len());
-        
-        while !self.demands.is_empty() && self.buses.iter().any(|b| b.can_assign_more()) {
+        println!("\t[LNS/Constructive] Demand size: {}", self.demands.len());
+        let mut can_assign_more = true;
+
+        while !self.demands.is_empty() && can_assign_more {
             // println!("[LNS] demand size: {}, can buses assign? {:?}", self.demands.len(), self.buses.iter().any(|b| b.can_assign_more()));
             
             // TODO: basically reorder these loops to avoid this n2?
             // TODO: move min_assignment to each bus. Find the min demand for each bus and add it 
-            let mut min_assignment: Option<(f64, usize, &Passenger)> = None;
+            can_assign_more = false;
             
             for i in 0..self.buses.len() {
                 let bus = &mut self.buses[i];
+                let mut min_assignment: Option<(f64, usize, &Passenger)> = None;
                 // println!("[LNS]\tAnalysing with bus: {}", bus.agent_id);
 
-                for demand in self.demands.iter() {
+                for (j, demand) in self.demands.iter().enumerate() {
                     // println!("[LNS]\t\t Testing assignment to bus: {:?}; demand {:?}", bus.agent_id, demand.dest_pos);
                     // use BFS with heuristic being straigh line distance
                     // try bus route with this demand
@@ -85,24 +87,33 @@ impl DynamicController {
                     if route_len < min_assignment.map(|(len, _, _)| len).unwrap_or(f64::MAX) {
                         // println!("[LNS]\t\t New Minimum Found");
                         // save this as an insertion to use
-                        min_assignment = Some((route_len, i, demand));
+                        min_assignment = Some((route_len, j, demand));
                     }
                 }
-            }
 
-            if let Some((_, bus_i, demand)) = min_assignment {
-                let bus = &mut self.buses[bus_i];
-                // println!("[LNS] Performing constructive insertion for bus: {}; demand {:?}", bus.agent_id, demand.dest_pos);
-                let index = self.demands.iter().position(|d| d == demand).unwrap();
-                let passenger = self.demands.remove(index).unwrap();
-                bus.constructive(passenger);
+                if let Some((_, demand_j, _demand)) = min_assignment {
+                    // let bus = &mut self.buses[bus_i];
+                    // println!("[LNS] Performing constructive insertion for bus: {}; demand {:?}", bus.agent_id, demand.dest_pos);
+                    // let index = self.demands.iter().position(|d| d == demand).unwrap();
+                    let passenger = self.demands.remove(demand_j).unwrap();
+                    bus.constructive(passenger);
+                    if bus.can_assign_more() {
+                        can_assign_more = true;
+                    }
+                } else {
+                    // println!("\t[LNS/Constructive] Bus {} didn't get a min assignment.", i);
+                }
             }
+        }
+
+        if !can_assign_more {
+            println!("\t[LNS/Constructive] Stopped because no more buses can assign passengers.");
         }
     }
 
     // destroy a solution
     pub fn destructive(&mut self, _graph: Arc<Graph>) {
-        println!("[LNS] Run Destructive Heuristic");
+        println!("\t[LNS/Destructive] Run Destructive Heuristic");
         // Go through and destroy the solutions and reclaim the demand into the main demand list
         for bus in self.buses.iter_mut() {
             self.demands.extend(&mut bus.destructive().into_iter());
@@ -135,7 +146,7 @@ impl DynamicController {
     ///             go back to the solution before trying to insert r
     ///
     pub fn large_neighbourhood_search(&mut self, graph: Arc<Graph>) {
-        let max_iter_count = 1; // TODO: increase this 
+        let max_iter_count = 2; // TODO: increase this 
         let mut iter_count = 0;
 
         while iter_count < max_iter_count {
@@ -154,7 +165,7 @@ impl Controller for DynamicController {
     }
 
     fn spawn_agent(&mut self, graph: Arc<crate::graph::Graph>) -> Option<&Self::Agent> {
-        println!("Spawning new bus");
+        // println!("Spawning new bus");
         self.id += 1;
         let bus = Bus::new(graph.clone(), 20, self.id, self.analytics.clone());
         self.buses.push(bus);
@@ -167,7 +178,8 @@ impl Controller for DynamicController {
         demand: Arc<DemandGenerator>,
         time: DateTime<Utc>,
     ) {
-        println!("Updating agents");
+        println!("Tick: {}", time);
+        println!("\tUpdating agents");
         
         self.demands.iter_mut().for_each(|d| d.update(&self.analytics));
 
@@ -175,6 +187,7 @@ impl Controller for DynamicController {
 
         // TODO: just for testing only do gen at 1/50 scale
         let demand_queue = demand.generate_scaled_amount(self.demand_scale, &time, Ok(graph.clone()));
+        println!("[SIMULATION] Demand Generated: {}", demand_queue.len());
         let mut demand_queue = demand_queue.into_iter().map(|d| {
             let passenger = demand_to_passenger(d, graph.clone(), self.pid);
             self.pid += 1;
@@ -182,7 +195,7 @@ impl Controller for DynamicController {
         }).collect();
         self.demands.append(&mut demand_queue);
 
-        println!("[LNS] Running LNS");
+        // println!("\t[LNS] Running LNS");
         self.large_neighbourhood_search(graph);
     }
 }

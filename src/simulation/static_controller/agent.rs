@@ -456,7 +456,7 @@ pub fn move_agent(
                 *agent.graph.get_adjacency()[&node]
                     .iter()
                     .find(|edge| {
-                        let edge_data = &agent.graph.get_edgelist()[edge];
+                        let edge_data = &agent.graph.get_edgelist()[*edge];
                         edge_data.start_id == next_node || edge_data.end_id == next_node
                     })
                     .unwrap()
@@ -547,7 +547,7 @@ pub fn move_agent(
                     let edge_id = agent.graph.get_adjacency()[&current_node]
                         .iter()
                         .find(|e| {
-                            let edge = &agent.graph.get_edgelist()[e];
+                            let edge = &agent.graph.get_edgelist()[*e];
                             edge.start_id == next_node || edge.end_id == next_node
                         })
                         .unwrap(); // TODO: fix potential panic here?

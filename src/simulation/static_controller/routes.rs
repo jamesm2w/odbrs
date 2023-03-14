@@ -125,6 +125,36 @@ pub fn load_routes() {
             (*stop, trips)
         }));
 
+    let mut removed = 0;
+    let mut trips_to_be_removed = HashSet::new();
+    network_data.trips_from_stop.retain(|stop, trips| {
+        if trips.len() < 12 { // False to remove 
+            network_data.stops.remove(stop);
+
+            for trip in trips { // Every trip which uses this stop needs to be axed
+                trips_to_be_removed.insert(*trip);
+            }
+
+            removed += 1;
+            false
+        } else { // True to retain
+            true 
+        }
+    });
+
+    for trip in trips_to_be_removed.iter() {
+        if let Some(trip_data) = network_data.trips.remove(&trip) {
+            for stop in trip_data.stops {
+                // Remove the trip from the trips from stop map
+                match network_data.trips_from_stop.get_mut(&stop) {
+                    Some(trips) => trips.retain(|v| *v != *trip), // remove reference to trip from stop
+                    None => {} // stop has probably been removed already for the low number of trips
+                }
+            }
+        }
+    }
+    println!("Removed {} stops with less than 12 trips. New Trips from Stop Len: {}", removed, network_data.trips_from_stop.len());
+    println!("Also removed {} trips which used those stops and references to those trips from their stops.", trips_to_be_removed.len());
     println!("Finished creating new network data. Writing to file...");
 
     // Serialise the network data with ciborium
@@ -380,4 +410,43 @@ mod test {
         println!("Loaded network data in {}ms", timer.elapsed().as_millis());
         println!("data tip len: {}", data.trips.len());
     }
+
+    // Find the maximum number of buses that can be running at the same time.. lower bound for number of buses TfWM has
+    #[test]
+    fn max_running_buses() {
+        // load_routes();
+
+        let timer = Instant::now();
+        let data = load_saved_network_data().unwrap();
+        println!("Loaded network data in {}ms", timer.elapsed().as_millis());
+
+        let timer = Instant::now();
+        let intervalc = max_overlapping_intervals(data.trips.iter().map(|(_, data)| {
+            (data.timings.first().unwrap().0, data.timings.last().unwrap().0)
+        }).collect::<Vec<_>>().as_slice());
+
+        println!("Max overlapping intervals: {}. Calculated in {}ms", intervalc, timer.elapsed().as_millis());
+    }
+}
+
+fn max_overlapping_intervals(intervals: &[(NaiveTime, NaiveTime)]) -> usize {
+    let mut endpoints = Vec::new();
+    for &(start, end) in intervals {
+        endpoints.push((start, true));
+        endpoints.push((end, false));
+    }
+    endpoints.sort();
+    let mut max_overlapping = 0;
+    let mut overlapping = 0;
+    for &(_, is_start) in &endpoints {
+        if is_start {
+            overlapping += 1;
+            if overlapping > max_overlapping {
+                max_overlapping = overlapping;
+            }
+        } else {
+            overlapping -= 1;
+        }
+    }
+    max_overlapping
 }

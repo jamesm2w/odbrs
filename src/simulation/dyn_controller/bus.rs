@@ -73,7 +73,7 @@ pub fn send_analytics(analytics: &Option<Sender<AnalyticsPackage>>, event: Analy
 
 impl Passenger {
     pub fn update(&mut self, analytics: &Option<Sender<AnalyticsPackage>>) {
-        println!("{:?} Passenger update", self.id);
+        // println!("{:?} Passenger update", self.id);
         match self.status {
             Status::Generated | Status::Expired => {}, // Passenger state necessitates nothing happening
             Status::TravelStart(ticks) => { // start by walking `ticks` to the start node
@@ -238,15 +238,15 @@ impl Bus {
         };
 
         // loop passengers on bus and remove if they have reached their destination
-        for passenger in self.passengers.iter_mut() {
-            if passenger.dest_node == node {
-                // Passenger has now finished bus journey and should move towards their destination 
-                send_analytics(&self.analytics, AnalyticsPackage::VehicleEvent(VehicleAnalyticsEvent::PassengerDropoff { id: self.agent_id as u32, passenger_id: passenger.id }));
+        // for passenger in self.passengers.iter_mut() {
+        //     if passenger.dest_node == node {
+        //         // Passenger has now finished bus journey and should move towards their destination 
+        //         send_analytics(&self.analytics, AnalyticsPackage::VehicleEvent(VehicleAnalyticsEvent::PassengerDropoff { id: self.agent_id as u32, passenger_id: passenger.id }));
                 
-                passenger.set_travel_end(self.graph.clone());
-                self.rem_capacity += 1;
-            }
-        }
+        //         passenger.set_travel_end(self.graph.clone());
+        //         self.rem_capacity += 1;
+        //     }
+        // }
         // should really not just delete this, move them out & clean up for statistics, etc.
         // self.passengers.retain(|passenger| passenger.dest_node != node);
         let mut getting_off = VecDeque::new();
@@ -254,7 +254,13 @@ impl Bus {
         while i < self.passengers.len() {
             let passenger = &self.passengers[i];
             if passenger.dest_node == node {
-                let passenger = self.passengers.remove(i);
+                let mut passenger = self.passengers.remove(i);
+
+                send_analytics(&self.analytics, AnalyticsPackage::VehicleEvent(VehicleAnalyticsEvent::PassengerDropoff { id: self.agent_id as u32, passenger_id: passenger.id }));
+                
+                passenger.set_travel_end(self.graph.clone());
+                self.rem_capacity += 1;
+
                 getting_off.push_back(passenger);
             } else {
                 i += 1;
@@ -309,7 +315,8 @@ impl Bus {
         let mut waypoints = bus_waypoints_with_passenger(self, passenger);
         let path = create_ordering(self.next_node, &mut waypoints, self.graph.clone());
         let mut path_len = 0.0;
-        for i in 0..path.len() - 1 {
+
+        for i in 0..path.len() - 1 { // just comparing straight line dist between waypoints not a full routefinding
             let u = path[i];
             let v = path[i + 1];
             let point_u = self.graph.get_nodelist().get(&u.node()).unwrap().point;
@@ -333,7 +340,7 @@ impl Bus {
         self.add_passenger_to_assignment(passenger);
 
         // println!("Constructive");
-        println!("\tBus {} has {} passengers", self.agent_id, self.passengers.len());
+        // println!("\t[LNS/Agent] Constructive: Bus {} now has {} passengers", self.agent_id, self.passengers.len());
         // println!("\tAssignment: {:?}", self.assignment);
 
         // Uses GreedyBFS to find an ordering of the waypoints for the bus
@@ -364,28 +371,25 @@ impl Bus {
     }
 
     // Destructive function to basically remove some passengers from the bus assignment
-    // TODO: maybe optimise loops in this mostly AI generated function
     pub fn destructive(&mut self) -> Vec<Passenger> {
         // loop throught assignent and remove 50% which aren't currently passengers
-        let mut removed = vec![];
-        for (node, passengers) in self.assignment.iter_mut() {
+        let mut removed = Vec::with_capacity(self.assignment.len() / 2);
+        for (_node, assignment) in self.assignment.iter_mut() {
             let mut rng = rand::thread_rng();
-            let mut to_remove = vec![];
-            
-            for passenger in passengers.iter() {
-                if !self.passengers.contains(passenger) { 
-                    if rng.gen_bool(0.1) {
-                        to_remove.push(passenger.clone());
-                    }
+
+            let mut i = 0;
+            while i < assignment.len() {
+                let passenger = &assignment[i];
+                if !self.passengers.contains(&passenger) && rng.gen_bool(0.5) { // if this assigned passenger is not on the bus currently can remove
+                    let passenger = assignment.remove(i);   
+                    removed.push(passenger);
+                } else {
+                    i += 1;
                 }
             }
 
-            for passenger in to_remove {
-                passengers.retain(|p| p != &passenger);
-                removed.push(passenger);
-            }
         }
-        println!("Destructive removed {:?}", removed.len());
+        // println!("\t[LNS/Agent] Destructive removed {:?}", removed.len());
         removed
     }
 
@@ -455,9 +459,9 @@ impl Bus {
             return; // No path to follow
         }
 
-        println!("Move self");
-        println!("Current element: {:?}", self.current_el);
-        println!("Next node: {:?}", self.next_node);
+        // println!("Move self");
+        // println!("Current element: {:?}", self.current_el);
+        // println!("Next node: {:?}", self.next_node);
         // println!("Path: {:?}", self.path_full);
 
         let mut move_distance = 804.672; //10.0; 804.672 = 13.4112 * 60.0 (13.4112 m/s * 60s)
